@@ -1,0 +1,50 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg-info/
+.eggs/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Virtualenvs
+.venv/
+venv/
+env/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# OS
+.DS_Store
+Thumbs.db
+
+# uv
+uv.lock
+
+# User-saved workflows (тільки .gitkeep лишається у git)
+workflows/*
+!workflows/.gitkeep
+
+# Згенеровані вихідні файли (для прикладу 02_read_write_copy)
+data/output.txt
+data/input.txt
+
+# Тимчасові логи uvicorn з integration-скрипта
+uvicorn.log
+uvicorn.err
+
+# Frontend
+frontend/node_modules/
+frontend/dist/
+
+# Claude
+CLAUDE.md
+plan.md
+.claude/

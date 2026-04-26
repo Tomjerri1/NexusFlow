@@ -1,0 +1,36 @@
+{
+  "name": "condition_branching",
+  "nodes": [
+    {
+      "id": "t1",
+      "type": "manual_trigger",
+      "config": {}
+    },
+    {
+      "id": "r1",
+      "type": "read_file",
+      "config": {"path": "data/input.txt"}
+    },
+    {
+      "id": "c1",
+      "type": "condition",
+      "config": {"expression": "input.size > 100"}
+    },
+    {
+      "id": "l_big",
+      "type": "log",
+      "config": {"message": "great file is large"}
+    },
+    {
+      "id": "l_small",
+      "type": "log",
+      "config": {"message": "small file"}
+    }
+  ],
+  "edges": [
+    {"from": "t1", "to": "r1"},
+    {"from": "r1", "to": "c1"},
+    {"from": "c1", "to": "l_big", "source_handle": "true"},
+    {"from": "c1", "to": "l_small", "source_handle": "false"}
+  ]
+}

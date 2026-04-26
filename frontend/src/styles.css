@@ -1,0 +1,42 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+    margin: 0;
+  }
+  body {
+    font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+      sans-serif;
+  }
+}
+
+/* React Flow override під темну тему */
+.react-flow__node {
+  font-size: 12px;
+}
+.react-flow__handle {
+  width: 8px;
+  height: 8px;
+  background: #38bdf8;
+  border-color: #0f172a;
+}
+.react-flow__edge-path {
+  stroke: #94a3b8;
+  stroke-width: 1.5;
+}
+.react-flow__controls {
+  background: #1e293b;
+}
+.react-flow__controls-button {
+  background: #1e293b;
+  color: #e2e8f0;
+  border-bottom-color: #334155;
+}
+.react-flow__controls-button svg {
+  fill: #e2e8f0;
+}

@@ -1,0 +1,18 @@
+{
+  "name": "hello_world",
+  "nodes": [
+    {
+      "id": "t1",
+      "type": "manual_trigger",
+      "config": {"initial_data": {"user": "Student"}}
+    },
+    {
+      "id": "l1",
+      "type": "log",
+      "config": {"message": "Hello, {input.user}!"}
+    }
+  ],
+  "edges": [
+    {"from": "t1", "to": "l1"}
+  ]
+}
