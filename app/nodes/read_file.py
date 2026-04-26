@@ -1,16 +1,38 @@
 import aiofiles
 
 from app.core.context import ExecutionContext
-from app.nodes.base import BaseNode
+from app.nodes.base import BaseNode, input_port, node_info, output_port
 from app.schemas.node_configs import ReadFileConfig
 
 
+@node_info(
+    display_name="Read File",
+    category="io",
+    color="#0284c7",
+    icon="file-text",
+    description="Reads UTF-8 (or configured encoding) text file.",
+)
+@input_port("path", type_hint="str", required=False, description="Override of config.path.")
+@output_port("content", type_hint="str")
+@output_port("size", type_hint="int")
+@output_port("path", type_hint="str")
 class ReadFileNode(BaseNode):
     type_name = "read_file"
     config_model = ReadFileConfig
 
     async def execute(self, context: ExecutionContext) -> dict:
-        path = context.resolve_template(self.config.path)
+        # Пріоритет: port `path` → config.path → ключ `path` з current_input.
+        port_value = context.node_inputs.get(self.id, {}).get("path")
+        if isinstance(port_value, str) and port_value:
+            raw_path = port_value
+        elif self.config.path:
+            raw_path = self.config.path
+        else:
+            raw_path = str(context.current_input.get("path", ""))
+        if not raw_path:
+            raise ValueError("read_file: no path provided (port/config/input all empty)")
+
+        path = context.resolve_template(raw_path)
         async with aiofiles.open(path, mode="r", encoding=self.config.encoding) as f:
             content = await f.read()
         return {"content": content, "size": len(content), "path": path}

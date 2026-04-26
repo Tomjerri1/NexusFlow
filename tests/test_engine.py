@@ -142,6 +142,105 @@ async def test_engine_unknown_node_type_raises(ctx: ExecutionContext):
         await _run(wf, ctx)
 
 
+async def test_port_mapped_value_visible_via_input_in_template(
+    ctx: ExecutionContext, fake_broker
+):
+    """Значення, яке прийшло на порт log-вузла, має бути видно у шаблоні
+    `{input.<port>}` без додаткових налаштувань — це універсальний міст
+    із node_inputs у current_input.
+    """
+    from app.schemas.workflow import Workflow as _Wf  # local alias avoids shadowing
+    wf = _Wf.model_validate(
+        {
+            "name": "bridge",
+            "nodes": [
+                {
+                    "id": "t1",
+                    "type": "manual_trigger",
+                    "config": {"initial_data": {"label": "hi"}},
+                },
+                {
+                    "id": "l1",
+                    "type": "log",
+                    "config": {"message": "got {input.headline}"},
+                },
+            ],
+            "edges": [
+                {
+                    "from": "t1",
+                    "to": "l1",
+                    "source_handle": "label",
+                    "target_handle": "headline",
+                },
+            ],
+        }
+    )
+    await _run(wf, ctx)
+    messages = [e.message for _, e in fake_broker.entries]
+    assert "got hi" in messages
+
+
+async def test_log_node_with_empty_message_dumps_input_as_json(
+    ctx: ExecutionContext, fake_broker
+):
+    wf = Workflow.model_validate(
+        {
+            "name": "log_dump",
+            "nodes": [
+                {
+                    "id": "t1",
+                    "type": "manual_trigger",
+                    "config": {"initial_data": {"a": 1, "b": "x"}},
+                },
+                {"id": "l1", "type": "log", "config": {"message": ""}},
+            ],
+            "edges": [{"from": "t1", "to": "l1"}],
+        }
+    )
+    await _run(wf, ctx)
+    json_dumps = [
+        e.message for _, e in fake_broker.entries
+        if e.node_id == "l1" and e.message.startswith("{")
+    ]
+    assert json_dumps, "expected a JSON-dump log entry from log node"
+    assert '"a": 1' in json_dumps[0]
+    assert '"b": "x"' in json_dumps[0]
+
+
+async def test_port_mapping_routes_value_into_target_handle(ctx: ExecutionContext):
+    """expression-вузол отримує значення `expression` через port-mapping
+    (без дублювання в config) і повертає обчислений результат.
+    """
+    wf = Workflow.model_validate(
+        {
+            "name": "port_map",
+            "nodes": [
+                {
+                    "id": "t1",
+                    "type": "manual_trigger",
+                    "config": {"initial_data": {"expr_text": "1 + 2"}},
+                },
+                {
+                    "id": "e1",
+                    "type": "expression",
+                    # дефолт — буде перекритий port-mapping'ом
+                    "config": {"expression": "0"},
+                },
+            ],
+            "edges": [
+                {
+                    "from": "t1",
+                    "to": "e1",
+                    "source_handle": "expr_text",
+                    "target_handle": "expression",
+                },
+            ],
+        }
+    )
+    result = await _run(wf, ctx)
+    assert result["e1"]["result"] == 3
+
+
 async def test_condition_false_branch_executes_when_expression_false(
     ctx: ExecutionContext, fake_broker
 ):

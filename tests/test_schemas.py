@@ -24,11 +24,17 @@ def test_edge_alias_from_to_maps_to_python_names():
     assert edge.source_handle is None
 
 
-def test_edge_source_handle_accepts_only_true_or_false():
-    Edge.model_validate({"from": "a", "to": "b", "source_handle": "true"})
-    Edge.model_validate({"from": "a", "to": "b", "source_handle": "false"})
-    with pytest.raises(ValidationError):
-        Edge.model_validate({"from": "a", "to": "b", "source_handle": "maybe"})
+def test_edge_handles_accept_arbitrary_port_names():
+    """Після переходу на гібридний port-mapping `source_handle`/`target_handle`
+    можуть бути будь-яким рядком (назва порту), не лише true/false.
+    """
+    e1 = Edge.model_validate({"from": "a", "to": "b", "source_handle": "true"})
+    assert e1.source_handle == "true"
+    e2 = Edge.model_validate(
+        {"from": "a", "to": "b", "source_handle": "content", "target_handle": "path"}
+    )
+    assert e2.source_handle == "content"
+    assert e2.target_handle == "path"
 
 
 def test_workflow_minimal_valid():
@@ -113,9 +119,13 @@ def test_validate_node_config_unknown_type_raises():
         validate_node_config(bad_node)
 
 
-def test_read_file_requires_path():
-    with pytest.raises(ValidationError):
-        ReadFileConfig.model_validate({})
+def test_read_file_path_optional_for_port_mapping():
+    """Шлях у ReadFileConfig може бути порожнім — реальне значення прийде
+    через port-mapping (`target_handle="path"`). Дефолт = "".
+    """
+    cfg = ReadFileConfig.model_validate({})
+    assert cfg.path == ""
+    assert cfg.encoding == "utf-8"
 
 
 def test_condition_requires_expression():

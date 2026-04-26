@@ -3,7 +3,7 @@ import re
 from simpleeval import EvalWithCompoundTypes, InvalidExpression
 
 from app.core.context import ExecutionContext
-from app.nodes.base import BaseNode
+from app.nodes.base import BaseNode, input_port, node_info, output_port
 from app.schemas.node_configs import ConditionConfig
 
 # `simpleeval` не дає атрибутного доступу за замовчуванням.
@@ -26,6 +26,17 @@ class ConditionEvalError(ValueError):
     """Помилка під час обчислення виразу condition-вузла."""
 
 
+@node_info(
+    display_name="Condition",
+    category="logic",
+    color="#d97706",
+    icon="git-branch",
+    description="Boolean branch: routes execution via 'true'/'false' source handles.",
+)
+@input_port("input", type_hint="dict", required=False)
+@output_port("true", type_hint="dict", description="Branch when expression is truthy.")
+@output_port("false", type_hint="dict", description="Branch when expression is falsy.")
+@output_port("result", type_hint="bool")
 class ConditionNode(BaseNode):
     """Безпечне обчислення булевого виразу.
 

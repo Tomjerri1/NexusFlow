@@ -1,8 +1,16 @@
 from app.core.context import ExecutionContext
-from app.nodes.base import BaseNode
+from app.nodes.base import BaseNode, node_info, output_port
 from app.schemas.node_configs import ManualTriggerConfig
 
 
+@node_info(
+    display_name="Manual Trigger",
+    category="trigger",
+    color="#059669",
+    icon="play",
+    description="Workflow entry point. Emits config.initial_data as output.",
+)
+@output_port("data", type_hint="dict", description="Initial payload propagated downstream.")
 class ManualTriggerNode(BaseNode):
     """Стартовий вузол. Просто емітить `initial_data` як свій output."""
 

@@ -16,15 +16,19 @@ NodeType = Literal[
 class Edge(BaseModel):
     """Спрямоване ребро графа: from_node -> to_node.
 
-    `source_handle` використовується вузлом `condition` для розгалуження:
-    "true" або "false". Для решти вузлів — None.
+    `source_handle`:
+      - для `condition` — "true"/"false" (умовне розгалуження),
+      - для типізованого мапінгу — назва вихідного порту вузла-джерела.
+    `target_handle` — назва вхідного порту вузла-приймача (port-mapping).
+    Якщо `None` — використовується дефолтна merge-маршрутизація (legacy).
     """
 
     model_config = ConfigDict(populate_by_name=True)
 
     from_node: str = Field(alias="from")
     to_node: str = Field(alias="to")
-    source_handle: Literal["true", "false"] | None = None
+    source_handle: str | None = None
+    target_handle: str | None = None
 
 
 class Node(BaseModel):

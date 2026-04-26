@@ -3,7 +3,8 @@ import inspect
 import logging
 import pkgutil
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, ClassVar
+from dataclasses import dataclass
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from pydantic import BaseModel
 
@@ -13,6 +14,155 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
+# ---------------------------------------------------------------------------
+# Декларативні метадані: порти + UI-info
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class PortSpec:
+    """Опис одного порту (вхідного або вихідного)."""
+
+    name: str
+    type_hint: str = "any"
+    required: bool = False
+    description: str | None = None
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "name": self.name,
+            "type": self.type_hint,
+            "required": self.required,
+            "description": self.description,
+        }
+
+
+@dataclass(frozen=True)
+class StaticConnection:
+    """Декларативний (зашитий у код вузла) зв'язок порт→порт.
+
+    Такі зв'язки серіалізуються в JSON-маніфест із прапорцем
+    `is_readonly: true` — фронтенд забороняє редагування цих ліній.
+    """
+
+    source_port: str
+    target_node: str
+    target_port: str
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "source_port": self.source_port,
+            "target_node": self.target_node,
+            "target_port": self.target_port,
+            "is_readonly": True,
+        }
+
+
+@dataclass(frozen=True)
+class NodeInfo:
+    """UI-метадані вузла, що повертаються у `/api/nodes/schema`."""
+
+    display_name: str
+    category: str = "general"
+    color: str = "#64748b"
+    icon: str = "circle"
+    description: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "display_name": self.display_name,
+            "category": self.category,
+            "color": self.color,
+            "icon": self.icon,
+            "description": self.description,
+        }
+
+
+def _ensure_own(cls: type, attr: str, default_factory):
+    """Гарантує, що атрибут належить *цьому* класу (а не успадкований).
+
+    Інакше @input_port на дочірньому класі мутував би список батька.
+    """
+    if attr not in cls.__dict__:
+        setattr(cls, attr, default_factory())
+    return getattr(cls, attr)
+
+
+def input_port(
+    name: str,
+    type_hint: str = "any",
+    required: bool = False,
+    description: str | None = None,
+):
+    """Декоратор класу вузла: оголошує вхідний порт.
+
+    Метадані зберігаються у `cls.__inputs__`.
+    """
+
+    def decorator(cls):
+        ports: list[PortSpec] = _ensure_own(cls, "__inputs__", list)
+        ports.insert(0, PortSpec(name=name, type_hint=type_hint, required=required, description=description))
+        return cls
+
+    return decorator
+
+
+def output_port(
+    name: str,
+    type_hint: str = "any",
+    description: str | None = None,
+):
+    """Декоратор класу вузла: оголошує вихідний порт. Метадані — у `cls.__outputs__`."""
+
+    def decorator(cls):
+        ports: list[PortSpec] = _ensure_own(cls, "__outputs__", list)
+        ports.insert(0, PortSpec(name=name, type_hint=type_hint, required=False, description=description))
+        return cls
+
+    return decorator
+
+
+def node_info(
+    display_name: str,
+    category: str = "general",
+    color: str = "#64748b",
+    icon: str = "circle",
+    description: str = "",
+):
+    """Декоратор класу вузла: записує UI-метадані у `cls.__node_info__`."""
+
+    def decorator(cls):
+        cls.__node_info__ = NodeInfo(
+            display_name=display_name,
+            category=category,
+            color=color,
+            icon=icon,
+            description=description,
+        )
+        return cls
+
+    return decorator
+
+
+def static_connection(source_port: str, target_node: str, target_port: str):
+    """Декоратор класу вузла: жорстко зашитий зв'язок порт→порт.
+
+    Серіалізується у схему з `is_readonly: true`. Двигун може використати
+    цей список як fallback-маршрутизацію, якщо у Workflow немає
+    відповідного explicit-ребра.
+    """
+
+    def decorator(cls):
+        conns: list[StaticConnection] = _ensure_own(cls, "__static_connections__", list)
+        conns.append(StaticConnection(source_port=source_port, target_node=target_node, target_port=target_port))
+        return cls
+
+    return decorator
+
+
+# ---------------------------------------------------------------------------
+# Базовий клас
+# ---------------------------------------------------------------------------
+
 class BaseNode(ABC):
     """Базовий клас для всіх вузлів workflow.
 
@@ -20,10 +170,21 @@ class BaseNode(ABC):
       - `type_name` — рядок-ідентифікатор (унікальний у `NODE_REGISTRY`).
       - `config_model` — Pydantic-клас для валідації `config`.
       - `execute(context)` — повертає dict-output, що передається наступним вузлам.
+
+    Декларативні метадані (опційно):
+      - `@input_port(...)`, `@output_port(...)` — порти.
+      - `@node_info(...)` — UI-метадані.
+      - `@static_connection(...)` — readonly-зв'язки.
     """
 
     type_name: ClassVar[str]
     config_model: ClassVar[type[BaseModel]]
+
+    # Декоратори заповнюють ці атрибути на конкретному підкласі.
+    __inputs__: ClassVar[list[PortSpec]] = []
+    __outputs__: ClassVar[list[PortSpec]] = []
+    __static_connections__: ClassVar[list[StaticConnection]] = []
+    __node_info__: ClassVar[NodeInfo | None] = None
 
     def __init__(self, node_id: str, config: dict):
         self.id = node_id
@@ -33,8 +194,40 @@ class BaseNode(ABC):
     async def execute(self, context: "ExecutionContext") -> dict:
         ...
 
+    @classmethod
+    def get_schema(cls) -> dict[str, Any]:
+        """JSON-маніфест вузла для `/api/nodes/schema` та динамічного UI."""
+        info = cls.__node_info__ or NodeInfo(display_name=cls.type_name)
+        inputs = list(cls.__dict__.get("__inputs__", cls.__inputs__))
+        outputs = list(cls.__dict__.get("__outputs__", cls.__outputs__))
+        statics = list(cls.__dict__.get("__static_connections__", cls.__static_connections__))
+
+        try:
+            config_schema = cls.config_model.model_json_schema()
+        except Exception as exc:  # noqa: BLE001
+            logger.warning("Cannot build config schema for %s: %s", cls.type_name, exc)
+            config_schema = {}
+
+        return {
+            "type_name": cls.type_name,
+            "info": info.to_dict(),
+            "inputs": [p.to_dict() for p in inputs],
+            "outputs": [p.to_dict() for p in outputs],
+            "static_connections": [c.to_dict() for c in statics],
+            "config_schema": config_schema,
+        }
+
 
 NODE_REGISTRY: dict[str, type[BaseNode]] = {}
+
+
+def register_node(cls: type[BaseNode]) -> type[BaseNode]:
+    """Опційний декоратор-аліас для явної реєстрації (поряд із auto-discovery)."""
+    type_name = getattr(cls, "type_name", None)
+    if not isinstance(type_name, str) or not type_name:
+        raise ValueError(f"{cls.__name__} has no valid type_name")
+    NODE_REGISTRY.setdefault(type_name, cls)
+    return cls
 
 
 def discover_nodes(package_path: str) -> dict[str, type[BaseNode]]:

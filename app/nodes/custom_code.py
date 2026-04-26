@@ -4,7 +4,7 @@ import sys
 from pathlib import Path
 
 from app.core.context import ExecutionContext
-from app.nodes.base import BaseNode
+from app.nodes.base import BaseNode, input_port, node_info, output_port
 from app.schemas.node_configs import CustomCodeConfig
 
 SCRIPTS_DIR = (Path(__file__).resolve().parent.parent.parent / "scripts").resolve()
@@ -50,6 +50,15 @@ def _load_script_module(script_name: str):
     return module
 
 
+@node_info(
+    display_name="Custom Code",
+    category="logic",
+    color="#c026d3",
+    icon="code",
+    description="Runs an async function from scripts/<name>.py.",
+)
+@input_port("input", type_hint="dict", required=False)
+@output_port("output", type_hint="dict", description="Whatever the user function returns.")
 class CustomCodeNode(BaseNode):
     """Викликає async-функцію `entry_point` з модуля `scripts/<script_name>.py`.
 

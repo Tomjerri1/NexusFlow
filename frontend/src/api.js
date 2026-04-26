@@ -23,3 +23,9 @@ export function openLogsSocket(jobId) {
   const proto = window.location.protocol === "https:" ? "wss" : "ws";
   return new WebSocket(`${proto}://${window.location.host}/ws/jobs/${jobId}`);
 }
+
+export async function fetchNodesSchema() {
+  const res = await fetch("/api/nodes/schema");
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json();
+}

@@ -66,6 +66,35 @@ def test_api_docs_endpoints_disabled(client: TestClient):
     assert client.get("/openapi.json").status_code == 404
 
 
+def test_nodes_schema_endpoint_returns_manifest(client: TestClient):
+    r = client.get("/api/nodes/schema")
+    assert r.status_code == 200, r.text
+    body = r.json()
+    assert "nodes" in body and isinstance(body["nodes"], list)
+    by_type = {n["type_name"]: n for n in body["nodes"]}
+    # Усі типи з NODE_REGISTRY мають з'явитися в схемі.
+    for expected in (
+        "manual_trigger",
+        "read_file",
+        "write_file",
+        "condition",
+        "log",
+        "expression",
+    ):
+        assert expected in by_type, f"missing schema for {expected}"
+
+    write = by_type["write_file"]
+    assert write["info"]["display_name"] == "Write File"
+    in_ports = {p["name"] for p in write["inputs"]}
+    out_ports = {p["name"] for p in write["outputs"]}
+    assert {"path", "content"} <= in_ports
+    assert {"path", "bytes_written"} <= out_ports
+
+    expression = by_type["expression"]
+    assert any(p["name"] == "expression" for p in expression["inputs"])
+    assert any(p["name"] == "result" for p in expression["outputs"])
+
+
 # ---------- /jobs/run + lifecycle ----------
 
 def test_post_jobs_run_returns_pending_job(client: TestClient):

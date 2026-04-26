@@ -21,6 +21,7 @@ function buildPayload(name, nodes, edges) {
       from: e.source,
       to: e.target,
       ...(e.sourceHandle ? { source_handle: e.sourceHandle } : {}),
+      ...(e.targetHandle ? { target_handle: e.targetHandle } : {}),
     })),
   };
 }

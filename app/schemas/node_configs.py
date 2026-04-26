@@ -10,12 +10,16 @@ class ManualTriggerConfig(BaseModel):
 
 
 class ReadFileConfig(BaseModel):
-    path: str = Field(min_length=1)
+    """Шлях може бути порожнім, якщо він прийде через порт `path` (port-mapping)."""
+
+    path: str = ""
     encoding: str = "utf-8"
 
 
 class WriteFileConfig(BaseModel):
-    path: str = Field(min_length=1)
+    """Шлях/вміст можуть бути порожніми, якщо приходять через порти `path`/`content`."""
+
+    path: str = ""
     # Якщо задано — записується саме цей текст (підтримує шаблони
     # `{input.x}` / `{nodes.id.y}`). Якщо `None` — fallback на `content_key`.
     content: str | None = None
@@ -30,9 +34,14 @@ class ConditionConfig(BaseModel):
 
 
 class LogNodeConfig(BaseModel):
-    """`message` підтримує плейсхолдери {input.foo} / {nodes.id.bar}."""
+    """`message` підтримує плейсхолдери {input.foo} / {nodes.id.bar}.
 
-    message: str = Field(min_length=1)
+    Якщо `message` порожнє — вузол логує весь `current_input` як JSON-рядок
+    (зручно для дебагу: підключив порт → побачив дані в логах без зайвих
+    налаштувань).
+    """
+
+    message: str = ""
     level: Literal["info", "warning", "error"] = "info"
 
 

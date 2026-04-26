@@ -8,6 +8,7 @@ import app.nodes  # noqa: F401  — імпорт запускає discover_nodes
 from app.api import jobs, websocket, workflows
 from app.core.job_manager import JobManager
 from app.core.log_broker import LogBroker
+from app.nodes.base import NODE_REGISTRY
 
 
 @asynccontextmanager
@@ -46,3 +47,23 @@ app.include_router(websocket.router, tags=["websocket"])
 @app.get("/health", tags=["meta"])
 async def health() -> dict[str, str]:
     return {"status": "ok"}
+
+
+@app.get("/api/nodes/schema", tags=["meta"])
+async def nodes_schema() -> dict[str, list[dict]]:
+    """JSON-маніфест усіх зареєстрованих вузлів для динамічного UI.
+
+    Кожен елемент містить порти (in/out), UI-метадані (`info`),
+    декларативні static-зв'язки (`is_readonly: true`) та pydantic-схему
+    конфігу. Помилка побудови схеми одного вузла не валить ендпоінт.
+    """
+    schemas: list[dict] = []
+    for type_name, cls in sorted(NODE_REGISTRY.items()):
+        try:
+            schemas.append(cls.get_schema())
+        except Exception as exc:  # noqa: BLE001
+            schemas.append({
+                "type_name": type_name,
+                "error": f"failed to build schema: {exc}",
+            })
+    return {"nodes": schemas}
