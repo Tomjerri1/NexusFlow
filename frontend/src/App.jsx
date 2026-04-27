@@ -16,6 +16,7 @@ export default function App() {
   const [name, setName] = useState("untitled");
   const [nodes, setNodes] = useState([]);
   const [edges, setEdges] = useState([]);
+  const [isReadonly, setIsReadonly] = useState(false);
   const [selectedId, setSelectedId] = useState(null);
   const [jobInfo, setJobInfo] = useState(null);
   // Лічильник, який NodePalette використовує як ключ для re-fetch'а списку
@@ -42,9 +43,11 @@ export default function App() {
     setLoadError(null);
     try {
       const wf = await fetchWorkflow(workflowName);
-      const { name: n, nodes: flowNodes, edges: flowEdges } = workflowToFlow(wf);
+      const { name: n, nodes: flowNodes, edges: flowEdges, isReadonly: ro } =
+        workflowToFlow(wf);
       setNodes(flowNodes);
       setEdges(flowEdges);
+      setIsReadonly(!!ro);
       setName(n || workflowName);
       setSelectedId(null);
       setJobInfo(null);
@@ -106,12 +109,15 @@ export default function App() {
               setNodes={setNodes}
               setEdges={setEdges}
               setSelectedId={setSelectedId}
+              workflowReadonly={isReadonly}
             />
             <RunPanel
               name={name}
               setName={setName}
               nodes={nodes}
               edges={edges}
+              isReadonly={isReadonly}
+              setIsReadonly={setIsReadonly}
               jobInfo={jobInfo}
               onJobStarted={setJobInfo}
               onSaved={onWorkflowSaved}
@@ -123,6 +129,7 @@ export default function App() {
             node={selectedNode}
             onUpdate={updateNode}
             onDelete={deleteNode}
+            readonly={isReadonly}
           />
         </main>
       </ReactFlowProvider>

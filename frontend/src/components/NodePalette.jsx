@@ -88,7 +88,7 @@ export default function NodePalette({ onLoadWorkflow, refreshTick = 0, loadError
                   onDragStart={(e) => onDragStart(e, type)}
                   className={
                     "cursor-grab select-none rounded-md px-3 py-2 text-xs font-semibold text-white shadow active:cursor-grabbing " +
-                    TYPE_BG[type]
+                    (TYPE_BG[type] || "bg-slate-600")
                   }
                   title={schema?.info?.description || label}
                 >

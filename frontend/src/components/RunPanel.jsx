@@ -15,6 +15,8 @@ export default function RunPanel({
   setName,
   nodes,
   edges,
+  isReadonly = false,
+  setIsReadonly,
   jobInfo,
   onJobStarted,
   onSaved,
@@ -34,7 +36,9 @@ export default function RunPanel({
     }
     try {
       setBusyRun(true);
-      const job = await runJob(flowToWorkflow(name, nodes, edges));
+      const job = await runJob(
+        flowToWorkflow(name, nodes, edges, { isReadonly })
+      );
       onJobStarted(job);
     } catch (e) {
       setError(String(e.message || e));
@@ -56,7 +60,9 @@ export default function RunPanel({
     }
     try {
       setBusySave(true);
-      const result = await saveWorkflow(flowToWorkflow(name.trim(), nodes, edges));
+      const result = await saveWorkflow(
+        flowToWorkflow(name.trim(), nodes, edges, { isReadonly })
+      );
       setSavedNotice(t("run.savedAs", `Saved as ${result.name}`));
       onSaved?.(result);
     } catch (e) {
@@ -95,6 +101,17 @@ export default function RunPanel({
           {busyRun ? t("run.running") : t("run.button")}
         </button>
       </div>
+
+      {setIsReadonly && (
+        <label className="mt-2 flex items-center gap-2 text-[11px] text-nexus-muted">
+          <input
+            type="checkbox"
+            checked={!!isReadonly}
+            onChange={(e) => setIsReadonly(e.target.checked)}
+          />
+          <span>{t("run.readonly")}</span>
+        </label>
+      )}
 
       {savedNotice && (
         <div className="mt-2 text-xs text-emerald-400">{savedNotice}</div>

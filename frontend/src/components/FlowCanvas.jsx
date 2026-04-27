@@ -26,6 +26,7 @@ export default function FlowCanvas({
   setNodes,
   setEdges,
   setSelectedId,
+  workflowReadonly = false,
 }) {
   const { t } = useTranslation();
   const wrapperRef = useRef(null);
@@ -34,21 +35,29 @@ export default function FlowCanvas({
 
   const nodeTypes = useMemo(() => ({ nexus: CustomNode }), []);
 
-  // Якщо у воркфлоу є вузол з декларативним static-зв'язком — редагування
-  // ребер блокується (ребра помічаються as readonly).
+  // Воркфлоу повністю readonly: або встановлено явний прапорець на самому
+  // воркфлоу, або є хоча б один вузол з декларативним static-зв'язком.
   const readonly = useMemo(() => {
+    if (workflowReadonly) return true;
     const types = nodes.map((n) => n.data?.type).filter(Boolean);
     return hasReadonlyConnections(schemas, types);
-  }, [schemas, nodes]);
+  }, [schemas, nodes, workflowReadonly]);
 
   const onNodesChange = useCallback(
-    (changes) => setNodes((ns) => applyNodeChanges(changes, ns)),
-    [setNodes]
+    (changes) => {
+      if (readonly) {
+        // Лише selection — позиція/видалення/розмір блокуються.
+        const safe = changes.filter((c) => c.type === "select");
+        setNodes((ns) => applyNodeChanges(safe, ns));
+        return;
+      }
+      setNodes((ns) => applyNodeChanges(changes, ns));
+    },
+    [setNodes, readonly]
   );
   const onEdgesChange = useCallback(
     (changes) => {
       if (readonly) {
-        // Дозволяємо лише selection-зміни, блокуємо delete/replace.
         const safe = changes.filter((c) => c.type === "select");
         setEdges((es) => applyEdgeChanges(safe, es));
         return;
@@ -65,14 +74,18 @@ export default function FlowCanvas({
     [setEdges, readonly]
   );
 
-  const onDragOver = useCallback((event) => {
-    event.preventDefault();
-    event.dataTransfer.dropEffect = "move";
-  }, []);
+  const onDragOver = useCallback(
+    (event) => {
+      event.preventDefault();
+      event.dataTransfer.dropEffect = readonly ? "none" : "move";
+    },
+    [readonly]
+  );
 
   const onDrop = useCallback(
     (event) => {
       event.preventDefault();
+      if (readonly) return;
       const type = event.dataTransfer.getData("application/reactflow");
       if (!type) return;
 
@@ -92,7 +105,7 @@ export default function FlowCanvas({
       };
       setNodes((ns) => ns.concat(newNode));
     },
-    [screenToFlowPosition, setNodes]
+    [screenToFlowPosition, setNodes, readonly]
   );
 
   const onSelectionChange = useCallback(
@@ -120,7 +133,8 @@ export default function FlowCanvas({
         edgesReconnectable={!readonly}
         edgesFocusable={!readonly}
         nodesConnectable={!readonly}
-        nodesDraggable={true}
+        nodesDraggable={!readonly}
+        elementsSelectable={true}
         fitView
         proOptions={{ hideAttribution: true }}
       >

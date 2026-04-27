@@ -29,6 +29,7 @@ class Edge(BaseModel):
     to_node: str = Field(alias="to")
     source_handle: str | None = None
     target_handle: str | None = None
+    is_readonly: bool = False
 
 
 class Node(BaseModel):
@@ -40,11 +41,15 @@ class Node(BaseModel):
 class Workflow(BaseModel):
     """JSON-граф workflow. Валідатор перевіряє унікальність id вузлів
     та цілісність ребер (від/до посилаються на наявні id).
+
+    `is_readonly` — глобальний прапорець "лише для перегляду": усі ребра
+    графа автоматично трактуються як readonly у двигуні та у фронтенді.
     """
 
     name: str = Field(min_length=1)
     nodes: list[Node]
     edges: list[Edge]
+    is_readonly: bool = False
 
     @model_validator(mode="after")
     def _check_graph_integrity(self) -> "Workflow":

@@ -75,16 +75,23 @@ export function workflowToFlow(workflow) {
       target: tgt,
       ...(sh ? { sourceHandle: sh } : {}),
       ...(th ? { targetHandle: th } : {}),
+      data: { is_readonly: !!e.is_readonly },
     };
   });
 
-  return { name: workflow.name || "", nodes: flowNodes, edges: flowEdges };
+  return {
+    name: workflow.name || "",
+    nodes: flowNodes,
+    edges: flowEdges,
+    isReadonly: !!workflow.is_readonly,
+  };
 }
 
 // React Flow state → backend Workflow JSON.
-export function flowToWorkflow(name, flowNodes, flowEdges) {
+export function flowToWorkflow(name, flowNodes, flowEdges, options = {}) {
   return {
     name: name || "untitled",
+    is_readonly: !!options.isReadonly,
     nodes: flowNodes.map((n) => ({
       id: n.id,
       type: n.data.type,
@@ -95,6 +102,7 @@ export function flowToWorkflow(name, flowNodes, flowEdges) {
       to: e.target,
       ...(e.sourceHandle ? { source_handle: e.sourceHandle } : {}),
       ...(e.targetHandle ? { target_handle: e.targetHandle } : {}),
+      ...(e.data?.is_readonly ? { is_readonly: true } : {}),
     })),
   };
 }

@@ -101,6 +101,8 @@ export const translations = {
       script_name: "Script (file in scripts/)",
       entry_point: "Entry point (function name)",
       params: "Params (JSON)",
+      noFields: "This node has no configurable fields.",
+      readonly: "Workflow is read-only — fields are locked.",
     },
     run: {
       heading: "Run",
@@ -116,6 +118,7 @@ export const translations = {
       savedAs: "Saved",
       nameRequired: "Workflow needs a non-empty name to save",
       namePlaceholder: "workflow name",
+      readonly: "Read-only workflow (lock editing)",
     },
     logs: {
       heading: "Live logs",
@@ -206,6 +209,8 @@ export const translations = {
       script_name: "Скрипт (файл у scripts/)",
       entry_point: "Точка входу (назва функції)",
       params: "Параметри (JSON)",
+      noFields: "У цього вузла немає налаштовуваних полів.",
+      readonly: "Сценарій лише для читання — поля заблоковані.",
     },
     run: {
       heading: "Запуск",
@@ -221,6 +226,7 @@ export const translations = {
       savedAs: "Збережено",
       nameRequired: "Для збереження потрібна непорожня назва",
       namePlaceholder: "назва сценарію",
+      readonly: "Лише для читання (заблокувати редагування)",
     },
     logs: {
       heading: "Логи в реальному часі",

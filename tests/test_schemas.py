@@ -94,6 +94,36 @@ def test_workflow_rejects_empty_name():
         Workflow.model_validate({"name": "", "nodes": [], "edges": []})
 
 
+def test_workflow_is_readonly_defaults_to_false():
+    wf = Workflow.model_validate(
+        {
+            "name": "x",
+            "nodes": [{"id": "t1", "type": "manual_trigger", "config": {}}],
+            "edges": [],
+        }
+    )
+    assert wf.is_readonly is False
+
+
+def test_workflow_accepts_is_readonly_true():
+    wf = Workflow.model_validate(
+        {
+            "name": "x",
+            "is_readonly": True,
+            "nodes": [{"id": "t1", "type": "manual_trigger", "config": {}}],
+            "edges": [],
+        }
+    )
+    assert wf.is_readonly is True
+
+
+def test_edge_is_readonly_defaults_false_and_accepts_true():
+    e1 = Edge.model_validate({"from": "a", "to": "b"})
+    assert e1.is_readonly is False
+    e2 = Edge.model_validate({"from": "a", "to": "b", "is_readonly": True})
+    assert e2.is_readonly is True
+
+
 # ---------- node_configs ----------
 
 @pytest.mark.parametrize(
