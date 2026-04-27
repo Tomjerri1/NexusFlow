@@ -28,15 +28,17 @@ Thumbs.db
 # uv
 uv.lock
 
-# User-saved workflows (тільки .gitkeep лишається у git)
+# User-saved workflows
 workflows/*
 !workflows/.gitkeep
 
-# Згенеровані вихідні файли (для прикладу 02_read_write_copy)
+# Generated source files
 data/output.txt
 data/input.txt
+data/
+!data/.gitkeep
 
-# Тимчасові логи uvicorn з integration-скрипта
+# Temporary uvicorn logs from the integration script
 uvicorn.log
 uvicorn.err
 
