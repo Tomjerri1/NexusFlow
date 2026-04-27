@@ -29,6 +29,10 @@ export const translations = {
       log: "Log",
       custom_code: "Custom code",
       expression: "Expression",
+      savedHeading: "Saved workflows",
+      savedLoading: "Loading…",
+      savedEmpty: "No saved workflows yet",
+      savedClickHint: "Click to load",
     },
     // Локалізовані назви вузлів (перекривають schema.info.display_name з бекенду).
     // Якщо ключа нема — UI падає на бекендний display_name, а потім на сирий type_name.
@@ -106,6 +110,12 @@ export const translations = {
       status: "Status:",
       error: "Error:",
       cantRunEmpty: "Add at least one node before running",
+      save: "Save",
+      saving: "Saving…",
+      saveTitle: "Save current workflow under this name",
+      savedAs: "Saved",
+      nameRequired: "Workflow needs a non-empty name to save",
+      namePlaceholder: "workflow name",
     },
     logs: {
       heading: "Live logs",
@@ -128,6 +138,10 @@ export const translations = {
       log: "Лог",
       custom_code: "Кастомний код",
       expression: "Вираз",
+      savedHeading: "Збережені сценарії",
+      savedLoading: "Завантажуються…",
+      savedEmpty: "Поки немає збережених сценаріїв",
+      savedClickHint: "Натисни, щоб завантажити",
     },
     nodes: {
       manual_trigger: "Ручний тригер",
@@ -201,6 +215,12 @@ export const translations = {
       status: "Статус:",
       error: "Помилка:",
       cantRunEmpty: "Додай хоча б один вузол перед запуском",
+      save: "Зберегти",
+      saving: "Зберігається…",
+      saveTitle: "Зберегти поточний сценарій під цим іменем",
+      savedAs: "Збережено",
+      nameRequired: "Для збереження потрібна непорожня назва",
+      namePlaceholder: "назва сценарію",
     },
     logs: {
       heading: "Логи в реальному часі",

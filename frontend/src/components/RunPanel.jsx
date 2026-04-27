@@ -1,6 +1,7 @@
 import { useState } from "react";
 import { useTranslation } from "../i18n.js";
-import { runJob } from "../api.js";
+import { runJob, saveWorkflow } from "../api.js";
+import { flowToWorkflow } from "../workflowIO.js";
 
 const STATUS_COLORS = {
   pending: "text-amber-400",
@@ -9,43 +10,59 @@ const STATUS_COLORS = {
   failed: "text-rose-400",
 };
 
-function buildPayload(name, nodes, edges) {
-  return {
-    name: name || "untitled",
-    nodes: nodes.map((n) => ({
-      id: n.id,
-      type: n.data.type,
-      config: n.data.config,
-    })),
-    edges: edges.map((e) => ({
-      from: e.source,
-      to: e.target,
-      ...(e.sourceHandle ? { source_handle: e.sourceHandle } : {}),
-      ...(e.targetHandle ? { target_handle: e.targetHandle } : {}),
-    })),
-  };
-}
-
-export default function RunPanel({ nodes, edges, jobInfo, onJobStarted }) {
+export default function RunPanel({
+  name,
+  setName,
+  nodes,
+  edges,
+  jobInfo,
+  onJobStarted,
+  onSaved,
+}) {
   const { t } = useTranslation();
-  const [name, setName] = useState("untitled");
-  const [busy, setBusy] = useState(false);
+  const [busyRun, setBusyRun] = useState(false);
+  const [busySave, setBusySave] = useState(false);
   const [error, setError] = useState(null);
+  const [savedNotice, setSavedNotice] = useState(null);
 
   const onRun = async () => {
     setError(null);
+    setSavedNotice(null);
     if (nodes.length === 0) {
       setError(t("run.cantRunEmpty"));
       return;
     }
     try {
-      setBusy(true);
-      const job = await runJob(buildPayload(name, nodes, edges));
+      setBusyRun(true);
+      const job = await runJob(flowToWorkflow(name, nodes, edges));
       onJobStarted(job);
     } catch (e) {
       setError(String(e.message || e));
     } finally {
-      setBusy(false);
+      setBusyRun(false);
+    }
+  };
+
+  const onSave = async () => {
+    setError(null);
+    setSavedNotice(null);
+    if (nodes.length === 0) {
+      setError(t("run.cantRunEmpty"));
+      return;
+    }
+    if (!name || !name.trim()) {
+      setError(t("run.nameRequired"));
+      return;
+    }
+    try {
+      setBusySave(true);
+      const result = await saveWorkflow(flowToWorkflow(name.trim(), nodes, edges));
+      setSavedNotice(t("run.savedAs", `Saved as ${result.name}`));
+      onSaved?.(result);
+    } catch (e) {
+      setError(String(e.message || e));
+    } finally {
+      setBusySave(false);
     }
   };
 
@@ -55,19 +72,33 @@ export default function RunPanel({ nodes, edges, jobInfo, onJobStarted }) {
 
       <div className="flex items-center gap-2">
         <input
-          value={name}
+          value={name ?? ""}
           onChange={(e) => setName(e.target.value)}
           className="flex-1 rounded border border-nexus-border bg-nexus-bg px-2 py-1 text-xs text-nexus-text focus:border-nexus-accent focus:outline-none"
+          placeholder={t("run.namePlaceholder")}
         />
         <button
           type="button"
-          disabled={busy}
+          disabled={busySave}
+          onClick={onSave}
+          title={t("run.saveTitle")}
+          className="rounded border border-nexus-border bg-nexus-bg px-3 py-1 text-xs font-semibold text-nexus-text hover:border-nexus-accent hover:text-nexus-accent disabled:opacity-50"
+        >
+          {busySave ? t("run.saving") : t("run.save")}
+        </button>
+        <button
+          type="button"
+          disabled={busyRun}
           onClick={onRun}
           className="rounded bg-nexus-accent px-3 py-1 text-xs font-semibold text-nexus-bg hover:opacity-90 disabled:opacity-50"
         >
-          {busy ? t("run.running") : t("run.button")}
+          {busyRun ? t("run.running") : t("run.button")}
         </button>
       </div>
+
+      {savedNotice && (
+        <div className="mt-2 text-xs text-emerald-400">{savedNotice}</div>
+      )}
 
       {error && (
         <div className="mt-2 break-words text-xs text-rose-400">

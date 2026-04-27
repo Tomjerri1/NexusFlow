@@ -11,6 +11,7 @@ JSON описує граф (вузли + ребра) → рушій тополо
 
 - [Швидкий старт](#швидкий-старт)
 - [Frontend (React Flow редактор)](#frontend-react-flow-редактор)
+- [Збереження та завантаження сценаріїв](#збереження-та-завантаження-сценаріїв)
 - [Гібридна модель декларативного мапінгу](#гібридна-модель-декларативного-мапінгу)
 - [WebSocket: live-логи](#websocket-live-логи)
 - [Архітектура](#архітектура)
@@ -70,14 +71,17 @@ curl http://localhost:8000/health
 │ NexusFlow                                          [EN][UK] │
 ├──────────┬──────────────────────────────────────┬───────────┤
 │ Palette  │                                      │ Settings  │
-│          │                                      │           │
-│ Manual   │                                      │ id: t1    │
-│ Read     │          React Flow Canvas           │ type: ... │
-│ Write    │       (drag nodes from left)         │           │
-│ Cond     │                                      │ ...form   │
-│ Log      │                                      │           │
-│          ├──────────────────────────────────────┤ [delete]  │
-│          │  Run [_____ name ____] [Run workflow]│           │
+│  Nodes   │                                      │           │
+│  Manual  │                                      │ id: t1    │
+│  Read    │          React Flow Canvas           │ type: ... │
+│  Write   │       (drag nodes from left)         │           │
+│  Cond    │                                      │ ...form   │
+│  Log     │                                      │           │
+│  ─────   │                                      │           │
+│  Saved   │                                      │           │
+│   hello  │                                      │           │
+│   math   ├──────────────────────────────────────┤ [delete]  │
+│          │  [name] [Save] [Run workflow]        │           │
 │          ├──────────────────────────────────────┤           │
 │          │  Live logs (WebSocket)               │           │
 │          │  [info] t1 : Executing...            │           │
@@ -90,7 +94,8 @@ curl http://localhost:8000/health
 2. Перетягни `Log`. На вузлі справа з'явиться `source` handle, на новому ліворуч — `target`.
 3. **З'єднай** їх, потягнувши від правого handle до лівого.
 4. Клікни на `Log` → у правій панелі введи `message`, наприклад `Hello, {input.user}!`.
-5. Натисни **`Run workflow`**. Знизу побачиш `job_id` і **live-стрім логів** через WebSocket.
+5. Введи назву сценарію та натисни **`Save`** — він з'явиться в палітрі ліворуч у секції *Saved workflows*. Будь-який запис у тій секції завантажується одним кліком.
+6. Натисни **`Run workflow`**. Знизу побачиш `job_id` і **live-стрім логів** через WebSocket.
 
 ### Зміна мови
 
@@ -135,6 +140,41 @@ curl -X POST http://localhost:8000/jobs/run \
 curl -X POST http://localhost:8000/workflows -H "Content-Type: application/json" -d @examples/01_hello_world.json
 curl -X POST http://localhost:8000/jobs/run -H "Content-Type: application/json" -d '{"workflow_name": "hello_world"}'
 ```
+
+---
+
+## Збереження та завантаження сценаріїв
+
+Сценарії зберігаються як JSON-файли у `workflows/`. UI редактор уміє:
+
+- **Завантажувати** будь-який збережений сценарій одним кліком — у лівій палітрі під списком вузлів є секція **«Saved workflows / Збережені сценарії»** зі списком імен (`GET /workflows`). Клацання по імені тягне `GET /workflows/<name>`, конвертує JSON у React Flow-стан і замінює канвас. Координати не зберігаються в JSON — UI робить простий **layered-layout** на основі топологічних рівнів (`x = layer × 280, y = slot × 130`), тож одразу видно граф.
+- **Зберігати** поточний канвас однією кнопкою — у `RunPanel` поруч із «Run workflow» з'явилася кнопка **«Save / Зберегти»**. Вона серіалізує канвас у backend-формат (включно з `source_handle` / `target_handle`), кидає `POST /workflows`, і після успіху палітра автоматично оновлює список (через лічильник `workflowsRefresh` в `App.jsx`).
+
+### REST-контракт
+
+| Метод   | Шлях                  | Призначення                                  |
+|---------|-----------------------|----------------------------------------------|
+| `GET`   | `/workflows`          | список імен збережених сценаріїв (`string[]`) |
+| `GET`   | `/workflows/{name}`   | повний JSON сценарію                          |
+| `POST`  | `/workflows`          | зберегти сценарій (тіло — `Workflow` JSON)    |
+| `DELETE`| `/workflows/{name}`   | видалити сценарій                             |
+
+Ім'я обмежене регулярним виразом `[A-Za-z0-9_-]{1,64}` — крапки, слеші та пробіли заборонені (фронтенд показує текст помилки з бекенду під полем введення).
+
+### Приклад: сценарій із коду → відображення в UI
+
+Файл `create_math_workflow.py` у корені створює `Code_First_Math` через Python API і зберігає у `workflows/`. Запусти його, перезавантаж editor — `Code_First_Math` з'явиться у секції **Saved workflows**:
+
+```bash
+python create_math_workflow.py
+# Сценарій успішно створено за шляхом: .../workflows/MyVisualFlow.json
+```
+
+Після цього:
+
+1. Відкрий `http://localhost:5173`.
+2. У палітрі ліворуч → клац на `Code_First_Math` → граф з'являється на канвасі.
+3. Зміни щось → введи нову назву (наприклад `MyVisualFlow`) → натисни **Save** → у списку зліва з'являється новий запис.
 
 ---
 

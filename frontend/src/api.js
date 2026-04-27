@@ -29,3 +29,34 @@ export async function fetchNodesSchema() {
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
   return res.json();
 }
+
+// --- Saved workflows ----------------------------------------------------
+// Бекенд монтує CRUD під префіксом `/workflows` (див. app/main.py).
+
+export async function fetchWorkflows() {
+  const res = await fetch("/workflows");
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  return res.json(); // -> string[]
+}
+
+export async function fetchWorkflow(name) {
+  const res = await fetch(`/workflows/${encodeURIComponent(name)}`);
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`HTTP ${res.status}: ${text}`);
+  }
+  return res.json(); // -> Workflow JSON
+}
+
+export async function saveWorkflow(data) {
+  const res = await fetch("/workflows", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify(data),
+  });
+  if (!res.ok) {
+    const text = await res.text();
+    throw new Error(`HTTP ${res.status}: ${text}`);
+  }
+  return res.json(); // -> {name, saved, path}
+}

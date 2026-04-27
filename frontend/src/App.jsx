@@ -6,16 +6,22 @@ import FlowCanvas from "./components/FlowCanvas.jsx";
 import ConfigPanel from "./components/ConfigPanel.jsx";
 import RunPanel from "./components/RunPanel.jsx";
 import LogConsole from "./components/LogConsole.jsx";
-import { getJob } from "./api.js";
+import { fetchWorkflow, getJob } from "./api.js";
 import { useTranslation } from "./i18n.js";
+import { workflowToFlow } from "./workflowIO.js";
 
 export default function App() {
   const { t } = useTranslation();
 
+  const [name, setName] = useState("untitled");
   const [nodes, setNodes] = useState([]);
   const [edges, setEdges] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
   const [jobInfo, setJobInfo] = useState(null);
+  // Лічильник, який NodePalette використовує як ключ для re-fetch'а списку
+  // після збереження. Інкрементуємо з RunPanel (через onSaved).
+  const [workflowsRefresh, setWorkflowsRefresh] = useState(0);
+  const [loadError, setLoadError] = useState(null);
 
   const selectedNode = nodes.find((n) => n.id === selectedId) || null;
 
@@ -31,6 +37,26 @@ export default function App() {
     setSelectedId((cur) => (cur === id ? null : cur));
   }, []);
 
+  // Завантажує збережений сценарій із бекенду й заміщає поточний канвас.
+  const loadWorkflow = useCallback(async (workflowName) => {
+    setLoadError(null);
+    try {
+      const wf = await fetchWorkflow(workflowName);
+      const { name: n, nodes: flowNodes, edges: flowEdges } = workflowToFlow(wf);
+      setNodes(flowNodes);
+      setEdges(flowEdges);
+      setName(n || workflowName);
+      setSelectedId(null);
+      setJobInfo(null);
+    } catch (e) {
+      setLoadError(String(e.message || e));
+    }
+  }, []);
+
+  const onWorkflowSaved = useCallback(() => {
+    setWorkflowsRefresh((x) => x + 1);
+  }, []);
+
   // Після завершення WS-стріму витягуємо фінальний Job для відображення статусу.
   const onJobFinished = useCallback(async (jobId) => {
     try {
@@ -44,7 +70,7 @@ export default function App() {
   // Поллимо статус, поки не пішов done з WS — це покриває кейси, коли WS падає.
   useEffect(() => {
     if (!jobInfo || ["success", "failed"].includes(jobInfo.status)) return;
-    const t = setInterval(async () => {
+    const tHandle = setInterval(async () => {
       try {
         const updated = await getJob(jobInfo.id);
         setJobInfo(updated);
@@ -52,7 +78,7 @@ export default function App() {
         /* noop */
       }
     }, 1000);
-    return () => clearInterval(t);
+    return () => clearInterval(tHandle);
   }, [jobInfo]);
 
   return (
@@ -67,7 +93,11 @@ export default function App() {
 
       <ReactFlowProvider>
         <main className="flex flex-1 overflow-hidden">
-          <NodePalette />
+          <NodePalette
+            onLoadWorkflow={loadWorkflow}
+            refreshTick={workflowsRefresh}
+            loadError={loadError}
+          />
 
           <div className="flex flex-1 flex-col">
             <FlowCanvas
@@ -78,10 +108,13 @@ export default function App() {
               setSelectedId={setSelectedId}
             />
             <RunPanel
+              name={name}
+              setName={setName}
               nodes={nodes}
               edges={edges}
               jobInfo={jobInfo}
               onJobStarted={setJobInfo}
+              onSaved={onWorkflowSaved}
             />
             <LogConsole jobId={jobInfo?.id || null} onJobFinished={onJobFinished} />
           </div>

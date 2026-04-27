@@ -1,3 +1,5 @@
+import { useEffect, useState } from "react";
+import { fetchWorkflows } from "../api.js";
 import { NODE_TYPES, TYPE_BG } from "../nodeTypes.js";
 import { useTranslation } from "../i18n.js";
 import { useNodeSchemas } from "../nodeSchema.js";
@@ -16,19 +18,45 @@ function categoryKey(schema) {
 }
 
 function categoryLabel(t, key) {
-  // Спершу пробуємо точний бекендний ключ (io / logic / trigger / ...).
-  // Якщо нема — повертаємо саме сире значення (з великої літери).
   return t(`categories.${key}`, key.charAt(0).toUpperCase() + key.slice(1));
 }
 
-export default function NodePalette() {
+export default function NodePalette({ onLoadWorkflow, refreshTick = 0, loadError }) {
   const { t } = useTranslation();
   const { schemas } = useNodeSchemas();
 
+  const [savedWorkflows, setSavedWorkflows] = useState([]);
+  const [savedError, setSavedError] = useState(null);
+  const [loadingNames, setLoadingNames] = useState(true);
+
+  // Перетягуємо тип-вузла з палітри на канвас.
   const onDragStart = (event, nodeType) => {
     event.dataTransfer.setData("application/reactflow", nodeType);
     event.dataTransfer.effectAllowed = "move";
   };
+
+  // Список збережених workflow підтягується при mount + при `refreshTick`
+  // (інкрементується після успішного збереження з RunPanel).
+  useEffect(() => {
+    let cancelled = false;
+    setLoadingNames(true);
+    fetchWorkflows()
+      .then((names) => {
+        if (cancelled) return;
+        setSavedWorkflows(Array.isArray(names) ? names : []);
+        setSavedError(null);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setSavedError(String(err.message || err));
+      })
+      .finally(() => {
+        if (!cancelled) setLoadingNames(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [refreshTick]);
 
   // Групуємо типи по категоріях (ключ = бекендний `category`).
   const groups = new Map();
@@ -40,7 +68,7 @@ export default function NodePalette() {
   }
 
   return (
-    <aside className="flex w-56 flex-col border-r border-nexus-border bg-nexus-panel p-3 text-sm">
+    <aside className="flex w-56 flex-col overflow-y-auto border-r border-nexus-border bg-nexus-panel p-3 text-sm">
       <div className="font-semibold">{t("palette.heading")}</div>
       <div className="mt-1 text-xs text-nexus-muted">{t("palette.hint")}</div>
 
@@ -70,6 +98,49 @@ export default function NodePalette() {
             })}
           </div>
         ))}
+      </div>
+
+      {/* --- Збережені сценарії ------------------------------------------ */}
+      <div className="mt-5 border-t border-nexus-border pt-3">
+        <div className="text-[10px] font-semibold uppercase tracking-wide text-nexus-muted">
+          {t("palette.savedHeading")}
+        </div>
+
+        {loadingNames && (
+          <div className="mt-2 text-xs text-nexus-muted">{t("palette.savedLoading")}</div>
+        )}
+
+        {!loadingNames && savedWorkflows.length === 0 && !savedError && (
+          <div className="mt-2 text-xs text-nexus-muted">
+            {t("palette.savedEmpty")}
+          </div>
+        )}
+
+        {savedError && (
+          <div className="mt-2 break-words text-xs text-rose-400">
+            {savedError}
+          </div>
+        )}
+
+        {loadError && (
+          <div className="mt-2 break-words text-xs text-rose-400">
+            {loadError}
+          </div>
+        )}
+
+        <div className="mt-2 flex flex-col gap-1">
+          {savedWorkflows.map((wfName) => (
+            <button
+              key={wfName}
+              type="button"
+              onClick={() => onLoadWorkflow?.(wfName)}
+              className="truncate rounded border border-nexus-border bg-nexus-bg px-2 py-1 text-left text-xs text-nexus-text hover:border-nexus-accent hover:text-nexus-accent"
+              title={t("palette.savedClickHint", "Click to load")}
+            >
+              {wfName}
+            </button>
+          ))}
+        </div>
       </div>
     </aside>
   );
