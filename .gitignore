@@ -35,7 +35,7 @@ workflows/*
 # Generated source files
 data/output.txt
 data/input.txt
-data/
+.data/
 !data/.gitkeep
 
 # Temporary uvicorn logs from the integration script
