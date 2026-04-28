@@ -61,6 +61,9 @@ export function workflowToFlow(workflow) {
     data: {
       type: n.type,
       config: structuredClone(n.config ?? {}),
+      // Системний атрибут — як двигун трактує вхідні ребра (AND/OR).
+      // Дефолт `all_success` синхронізовано з Pydantic-моделлю Node.
+      trigger_rule: n.trigger_rule || "all_success",
     },
   }));
 
@@ -96,6 +99,11 @@ export function flowToWorkflow(name, flowNodes, flowEdges, options = {}) {
       id: n.id,
       type: n.data.type,
       config: n.data.config,
+      // Передаємо тригер-правило лише якщо воно не дефолтне — щоб JSON
+      // залишався мінімальним для звичайних воркфлоу.
+      ...(n.data.trigger_rule && n.data.trigger_rule !== "all_success"
+        ? { trigger_rule: n.data.trigger_rule }
+        : {}),
     })),
     edges: flowEdges.map((e) => ({
       from: e.source,

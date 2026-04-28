@@ -15,6 +15,7 @@ JSON описує граф (вузли + ребра) → рушій тополо
 - [Гібридна модель декларативного мапінгу](#гібридна-модель-декларативного-мапінгу)
 - [Автоматична конвертація типів між портами](#автоматична-конвертація-типів-між-портами)
 - [Пропуск «мертвих» гілок (dead-branch cascade)](#пропуск-мертвих-гілок-dead-branch-cascade)
+- [Trigger Rules (правила активації вузла)](#trigger-rules-правила-активації-вузла)
 - [Read-only режим (Static Connections)](#readonly-режим-зв-язків)
 - [Динамічна панель налаштувань](#динамічна-панель-налаштувань-json-schema-driven)
 - [WebSocket: live-логи](#websocket-live-логи)
@@ -138,19 +139,23 @@ export const translations = {
 
 ### Динамічна панель налаштувань (JSON-Schema driven)
 
-Права панель `ConfigPanel.jsx` більше не містить блоків `if (type === ...)`. Замість цього вона рекурсивно проходить по `config_schema.properties` із бекенду й рендерить поля на льоту:
+Права панель `ConfigPanel.jsx` повністю керується JSON-схемою з бекенду — жодних `if (type === "read_file") ...`. Компонент бере `schemas[type].config_schema` з контексту `useNodeSchemas()` й рендерить поля по `properties`, мапуючи declared type на конкретний control:
 
-| JSON-Schema fragment            | UI-рендер                                       |
-|---------------------------------|-------------------------------------------------|
-| `type: "string"` (короткі поля) | `<input type="text">`                           |
-| `type: "string"` для `message`/`content`/`description`/… | `<textarea>` (евристика по імені поля) |
-| `type: "boolean"`               | `<input type="checkbox">`                       |
-| `type: "integer"` / `"number"`  | `<input type="number">`                         |
-| `enum: [...]`                   | `<select>` із варіантами                        |
-| `type: "object"` / `"array"`    | `<textarea>` із live-валідацією JSON            |
-| `anyOf: [{string},{null}]`      | unwrap до non-null типу (Pydantic optional)     |
+| JSON-Schema fragment                               | UI-рендер                                       |
+|----------------------------------------------------|-------------------------------------------------|
+| `type: "string"` (короткі поля)                    | `<input type="text">`                           |
+| `type: "string"` для `message`/`content`/`prompt`/… | `<textarea>` (евристика по імені поля)         |
+| `type: "boolean"`                                  | `<input type="checkbox">`                       |
+| `type: "integer"` / `"number"`                     | `<input type="number">`                         |
+| `enum: [...]`                                      | `<select>` із варіантами                        |
+| `type: "object"` / `"array"`                       | `<textarea>` із live-валідацією JSON            |
+| `name ∈ {initial_data, params}`                    | `<textarea>` JSON, незалежно від declared type  |
+| `description` містить слово **"JSON"**             | `<textarea>` JSON, незалежно від declared type  |
+| `anyOf: [{string},{null}]`                         | unwrap до non-null типу (Pydantic optional)     |
 
-Назви полів проходять через i18n: `t(\`config.<propName>\`, fallback=schema.title || propName)`. Якщо ти додаєш новий вузол із Pydantic-конфігом, **жодного коду у фронтенді змінювати не потрібно** — поля з'являться автоматично.
+**Лейбл** поля: `t(\`config.<propName>\`, schema.title \|\| propName)` — спочатку i18n-ключ, потім бекендний `title`, потім сире ім'я. **Підказка під полем (hint)**: `schema.description` зі схеми (переклад опційний через `config.<propName>.hint`). Це означає: бекенд-розробник пише змістовний `description=` у Pydantic-полі один раз, і UI одразу показує hint під відповідним інпутом — без правок фронтенду.
+
+Якщо ти додаєш новий вузол із Pydantic-конфігом, **жодного коду у фронтенді змінювати не потрібно** — поля з'являться автоматично, із правильними контролами та підказками. Коли поле логічно є JSON-значенням, але типізоване в Python як `str` (наприклад, серіалізований payload), просто додай `Field(..., description="...JSON payload...")` — фронтенд побачить «JSON» у описі та вимкне валідовану JSON-textarea.
 
 ### Запуск прикладу через REST (без UI)
 
@@ -305,6 +310,82 @@ T1 → C (condition: input.flag)
 Це покривається тестами `tests/test_engine.py::test_dead_branch_cascades_through_chain` та `test_dead_branch_kills_node_with_other_inputs_only_from_dead_branch`.
 
 > Зворотний бік цього контракту: **якщо вузол має хоч одне живе вхідне ребро ззовні мертвої гілки** — він залишається живим. Тобто node, що зливає дані з true-гілки condition'а та з незалежного джерела (`T2 → D`), все одно виконається на true-вибірці. «Мертвість» поширюється лише через ребра, не через сусідство.
+
+---
+
+## Trigger Rules (правила активації вузла)
+
+Кожен вузол має системне поле `trigger_rule` (Pydantic-модель `Node`), яке диктує двигуну, **коли** саме викликати `execute()` для цього вузла, виходячи зі стану його вхідних ребер. Це базова властивість, доступна для **будь-якого** типу вузла — не частина `config`.
+
+| Значення        | Семантика                                   | Коли використовувати                                          |
+|-----------------|---------------------------------------------|---------------------------------------------------------------|
+| `all_success` (default) | **AND** — fire лише якщо ВСІ вхідні ребра живі | Класичний DAG-pipeline: всі попередники мають відпрацювати    |
+| `one_success`   | **OR** — fire якщо хоча б ОДНЕ вхідне ребро живе | Merge-вузол після condition'а; fail-over; «будь-який тригер» |
+
+Стартові вузли (без вхідних ребер) активуються **завжди**, незалежно від `trigger_rule`.
+
+### Чому дефолт — `all_success`
+
+Це консервативна семантика: вона ловить помилки в дизайні графа, де користувач не очікував, що частина гілки померла. Якщо ви свідомо хочете merge-поведінку — треба явно перемкнути вузол на `one_success` (один клік у UI або одне поле у JSON). Це більш «fail loud», ніж старий дефолт.
+
+### JSON-приклад
+
+```json
+{
+  "id": "merge",
+  "type": "log",
+  "config": {"message": "Branch finished"},
+  "trigger_rule": "one_success"
+}
+```
+
+Якщо `trigger_rule` не вказано — Pydantic підставить `"all_success"`. Поле серіалізується у JSON лише коли воно НЕ дефолтне (мінімізує файли збережених воркфлоу).
+
+### UI
+
+У `ConfigPanel` зверху, прямо під системним рядком `id` / `type`, з'являється `<select>` з варіантами **«All Inputs (AND)»** та **«Any Input (OR)»** + локалізована підказка. Вибір одразу записується у `node.data.trigger_rule` і потрапляє у backend-формат через `flowToWorkflow`.
+
+### Code-First (Python API)
+
+Для скриптів генерації (на кшталт `create_complex_workflow.py`) трігер-правило передається як звичайний kwarg у Pydantic-модель `Node`:
+
+```python
+from app.schemas.workflow import Edge, Node, Workflow
+
+wf = Workflow(
+    name="condition_with_merge",
+    nodes=[
+        Node(id="t1", type="manual_trigger", config={"initial_data": {"v": 200}}),
+        Node(id="c1", type="condition", config={"expression": "input.v > 100"}),
+        Node(id="lt", type="log", config={"message": "big"}),
+        Node(id="lf", type="log", config={"message": "small"}),
+        # ↓↓↓ merge має fire'итися, як тільки одна з гілок жива
+        Node(id="merge", type="log",
+             config={"message": "Branch finished"},
+             trigger_rule="one_success"),
+    ],
+    edges=[
+        Edge(from_node="t1", to_node="c1"),
+        Edge(from_node="c1", to_node="lt", source_handle="true"),
+        Edge(from_node="c1", to_node="lf", source_handle="false"),
+        Edge(from_node="lt", to_node="merge"),
+        Edge(from_node="lf", to_node="merge"),
+    ],
+)
+```
+
+Без `trigger_rule="one_success"` цей merge помер би разом із dead-branch (бо одне з його вхідних ребер мертве при дефолтному `all_success`).
+
+### Як це інтегрується з dead-branch cascade
+
+`_is_alive` спершу перевіряє inbound-ребра (живе/мертве через `dead_edges`/`dead_nodes`), а потім застосовує `trigger_rule`:
+
+- `all_success` → `all(_edge_alive(e) for e in inbound)`
+- `one_success` → `any(_edge_alive(e) for e in inbound)`
+
+Якщо вузол мертвий — він додається в `dead_nodes`, його outbound-ребра штампуються в `dead_edges` (каскад). Тобто `trigger_rule` визначає **поріг** активації, а каскад поширення «смерті» вглиб графа працює однаково для обох правил.
+
+Покривається тестами `tests/test_engine.py::test_trigger_rule_*` (3 тести: AND блокує merge при частково мертвих входах; OR пропускає merge коли хоч одне ребро живе; OR теж пропускає merge коли ВСІ входи мертві).
 
 ---
 
@@ -542,7 +623,7 @@ pytest                                                                # усі �
 pytest --cov=app.core --cov=app.nodes --cov-report=term-missing       # з покриттям
 ```
 
-Поточний стан: **93 passed** (включно з тестами на `is_readonly`-каскад на ребрах, auto-conversion типів між портами та dead-branch cascade на 3+ рівні нащадків).
+Поточний стан: **99 passed** (включно з тестами на `is_readonly`-каскад на ребрах, auto-conversion типів між портами, dead-branch cascade на 3+ рівні нащадків та `trigger_rule` AND/OR-семантику).
 
 ### Frontend
 ```bash

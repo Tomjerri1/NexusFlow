@@ -403,6 +403,114 @@ async def test_dead_branch_kills_node_with_other_inputs_only_from_dead_branch(
     assert "merge" not in result
 
 
+async def test_trigger_rule_all_success_skips_node_when_one_input_dead(
+    ctx: ExecutionContext,
+):
+    """За дефолтним правилом `all_success` merge-вузол не має виконатися,
+    якщо хоча б одне його вхідне ребро мертве (тут — false-гілка condition'а).
+    """
+    wf = Workflow.model_validate(
+        {
+            "name": "all_success_diamond",
+            "nodes": [
+                {"id": "t1", "type": "manual_trigger",
+                 "config": {"initial_data": {"v": 200}}},
+                {"id": "c1", "type": "condition",
+                 "config": {"expression": "input.v > 100"}},
+                {"id": "lt", "type": "log", "config": {"message": "true"}},
+                {"id": "lf", "type": "log", "config": {"message": "false"}},
+                # merge має ДВА вхідні ребра: одне з true-гілки, одне з false-гілки.
+                # Default trigger_rule = all_success, тож merge має пропуститися.
+                {"id": "merge", "type": "log", "config": {"message": "merge"}},
+            ],
+            "edges": [
+                {"from": "t1", "to": "c1"},
+                {"from": "c1", "to": "lt", "source_handle": "true"},
+                {"from": "c1", "to": "lf", "source_handle": "false"},
+                {"from": "lt", "to": "merge"},
+                {"from": "lf", "to": "merge"},
+            ],
+        }
+    )
+    result = await _run(wf, ctx)
+    assert result["c1"]["result"] is True
+    assert "lt" in result
+    assert "lf" not in result
+    # all_success: одне з вхідних ребер merge мертве → merge мертвий
+    assert "merge" not in result
+
+
+async def test_trigger_rule_one_success_runs_node_when_at_least_one_input_alive(
+    ctx: ExecutionContext,
+):
+    """Той самий граф, але merge має `trigger_rule="one_success"` —
+    OR-семантика, тож merge має виконатися, бо true-гілка жива.
+    """
+    wf = Workflow.model_validate(
+        {
+            "name": "one_success_diamond",
+            "nodes": [
+                {"id": "t1", "type": "manual_trigger",
+                 "config": {"initial_data": {"v": 200}}},
+                {"id": "c1", "type": "condition",
+                 "config": {"expression": "input.v > 100"}},
+                {"id": "lt", "type": "log", "config": {"message": "true"}},
+                {"id": "lf", "type": "log", "config": {"message": "false"}},
+                {"id": "merge", "type": "log",
+                 "config": {"message": "merge"},
+                 "trigger_rule": "one_success"},
+            ],
+            "edges": [
+                {"from": "t1", "to": "c1"},
+                {"from": "c1", "to": "lt", "source_handle": "true"},
+                {"from": "c1", "to": "lf", "source_handle": "false"},
+                {"from": "lt", "to": "merge"},
+                {"from": "lf", "to": "merge"},
+            ],
+        }
+    )
+    result = await _run(wf, ctx)
+    assert "lt" in result
+    assert "lf" not in result
+    # one_success: достатньо одного живого вхідного ребра (lt) → merge виконується
+    assert "merge" in result
+
+
+async def test_trigger_rule_one_success_skipped_when_all_inputs_dead(
+    ctx: ExecutionContext,
+):
+    """Навіть для `one_success` вузол має померти, якщо ВСІ його входи мертві."""
+    wf = Workflow.model_validate(
+        {
+            "name": "one_success_all_dead",
+            "nodes": [
+                {"id": "t1", "type": "manual_trigger",
+                 "config": {"initial_data": {"v": 1}}},
+                {"id": "c1", "type": "condition",
+                 "config": {"expression": "input.v > 100"}},
+                {"id": "lt", "type": "log", "config": {"message": "true"}},
+                {"id": "lt2", "type": "log", "config": {"message": "true2"}},
+                {"id": "merge", "type": "log",
+                 "config": {"message": "merge"},
+                 "trigger_rule": "one_success"},
+            ],
+            "edges": [
+                {"from": "t1", "to": "c1"},
+                {"from": "c1", "to": "lt", "source_handle": "true"},
+                {"from": "c1", "to": "lt2", "source_handle": "true"},
+                {"from": "lt", "to": "merge"},
+                {"from": "lt2", "to": "merge"},
+            ],
+        }
+    )
+    result = await _run(wf, ctx)
+    assert result["c1"]["result"] is False
+    assert "lt" not in result
+    assert "lt2" not in result
+    # Усі inbound merge мертві → merge мертвий навіть із one_success
+    assert "merge" not in result
+
+
 async def test_dead_node_marks_outgoing_edges_dead():
     """Прямий unit-тест на каскад: `_mark_node_dead` стампує усі
     вихідні ребра у `dead_edges`.

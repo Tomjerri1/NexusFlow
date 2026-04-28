@@ -103,6 +103,11 @@ export const translations = {
       params: "Params (JSON)",
       noFields: "This node has no configurable fields.",
       readonly: "Workflow is read-only — fields are locked.",
+      triggerRule: "Trigger rule",
+      allSuccess: "All Inputs (AND)",
+      oneSuccess: "Any Input (OR)",
+      allSuccessHint: "Run only when every incoming edge is alive.",
+      oneSuccessHint: "Run as soon as at least one incoming edge is alive.",
     },
     run: {
       heading: "Run",
@@ -211,6 +216,11 @@ export const translations = {
       params: "Параметри (JSON)",
       noFields: "У цього вузла немає налаштовуваних полів.",
       readonly: "Сценарій лише для читання — поля заблоковані.",
+      triggerRule: "Правило активації",
+      allSuccess: "Усі входи (AND)",
+      oneSuccess: "Будь-який вхід (OR)",
+      allSuccessHint: "Виконати, лише коли ВСІ вхідні ребра живі.",
+      oneSuccessHint: "Виконати, щойно жодне з вхідних ребер не мертве.",
     },
     run: {
       heading: "Запуск",

@@ -101,6 +101,7 @@ export default function FlowCanvas({
         data: {
           type,
           config: structuredClone(DEFAULT_CONFIG[type]),
+          trigger_rule: "all_success",
         },
       };
       setNodes((ns) => ns.concat(newNode));

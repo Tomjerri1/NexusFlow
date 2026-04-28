@@ -13,6 +13,13 @@ NodeType = Literal[
 ]
 
 
+# Правила активації вузла на основі стану вхідних ребер.
+# `all_success` — fire лише якщо ВСІ вхідні ребра живі (AND).
+# `one_success` — fire якщо ХОЧА Б ОДНЕ вхідне ребро живе (OR).
+# Стартові вузли (без inbound) активуються завжди.
+TriggerRule = Literal["all_success", "one_success"]
+
+
 class Edge(BaseModel):
     """Спрямоване ребро графа: from_node -> to_node.
 
@@ -36,6 +43,12 @@ class Node(BaseModel):
     id: str
     type: NodeType
     config: dict = Field(default_factory=dict)
+    # Системний (не-конфіг) атрибут вузла: визначає, як двигун розглядає
+    # вхідні ребра. За замовчуванням — `all_success` (AND-семантика):
+    # вузол виконається, лише якщо ВСІ вхідні ребра живі. Перемикайте на
+    # `one_success` для merge-вузлів, які мають спрацьовувати, як тільки
+    # хоч одна гілка живе (OR-семантика).
+    trigger_rule: TriggerRule = "all_success"
 
 
 class Workflow(BaseModel):

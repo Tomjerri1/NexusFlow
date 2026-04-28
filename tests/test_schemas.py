@@ -124,6 +124,27 @@ def test_edge_is_readonly_defaults_false_and_accepts_true():
     assert e2.is_readonly is True
 
 
+def test_node_trigger_rule_default_is_all_success():
+    n = Node.model_validate({"id": "x", "type": "log", "config": {"message": "hi"}})
+    assert n.trigger_rule == "all_success"
+
+
+def test_node_trigger_rule_accepts_one_success():
+    n = Node.model_validate(
+        {"id": "x", "type": "log", "config": {"message": "hi"},
+         "trigger_rule": "one_success"}
+    )
+    assert n.trigger_rule == "one_success"
+
+
+def test_node_trigger_rule_rejects_unknown_value():
+    with pytest.raises(ValidationError):
+        Node.model_validate(
+            {"id": "x", "type": "log", "config": {"message": "hi"},
+             "trigger_rule": "always"}
+        )
+
+
 # ---------- node_configs ----------
 
 @pytest.mark.parametrize(

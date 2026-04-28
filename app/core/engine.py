@@ -261,23 +261,37 @@ class WorkflowEngine:
         dead_nodes: set[str],
         dead_edges: set[DeadEdgeKey],
     ) -> bool:
-        """Вузол живий, якщо ХОЧА Б одне його вхідне ребро не в `dead_edges`
-        і його джерело не в `dead_nodes`. Стартові вузли (без inbound) — живі.
+        """Чи має вузол виконатися — залежно від його `trigger_rule`.
 
-        Іншими словами: якщо всі вхідні ребра мертві — вузол мертвий і має
-        бути пропущений. Це автоматично каскадно поширює пропуск униз
-        графа разом із `_mark_node_dead` (який стампує outbound-ребра).
+        Правила:
+          - `all_success` (за замовчуванням, AND-семантика):
+            ВСІ вхідні ребра мають бути живі. Якщо хоч одне мертве —
+            вузол пропускається. Корисно для класичних DAG-pipeline'ів.
+          - `one_success` (OR-семантика):
+            Достатньо хоча б одного живого вхідного ребра. Корисно для
+            merge-вузлів, які мають спрацювати, як тільки прийшла одна
+            із N гілок (наприклад, fail-over або «будь-який тригер»).
+          - Стартові вузли (без inbound) завжди живі.
+
+        Ребро вважається мертвим, якщо його ключ у `dead_edges` або його
+        джерело — у `dead_nodes` (каскад через `_mark_node_dead`).
         """
         inbound = [e for e in edges if e.to_node == node.id]
         if not inbound:
             return True  # стартовий вузол
-        for edge in inbound:
+
+        def _edge_alive(edge: Edge) -> bool:
             if _edge_key(edge) in dead_edges:
-                continue
+                return False
             if edge.from_node in dead_nodes:
-                continue
+                return False
             return True
-        return False
+
+        rule = getattr(node, "trigger_rule", "all_success")
+        if rule == "one_success":
+            return any(_edge_alive(e) for e in inbound)
+        # default — `all_success`
+        return all(_edge_alive(e) for e in inbound)
 
     @staticmethod
     def _mark_node_dead(

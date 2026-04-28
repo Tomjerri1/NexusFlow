@@ -18,6 +18,11 @@ const LONG_TEXT_FIELDS = new Set([
 // тип `object` без явного підтипу.
 const JSON_TYPES = new Set(["object", "array"]);
 
+// Імена полів, які завжди йдуть як JSON-textarea, незалежно від declared
+// type у схемі. У майбутньому сюди можна додавати знайомі ключі для
+// складних структур (наприклад, `payload`, `headers`).
+const JSON_FIELD_NAMES = new Set(["initial_data", "params"]);
+
 const inputClass =
   "w-full rounded border border-nexus-border bg-nexus-bg px-2 py-1 text-xs text-nexus-text focus:border-nexus-accent focus:outline-none disabled:cursor-not-allowed disabled:opacity-60";
 
@@ -52,6 +57,19 @@ function isLongText(name, schema) {
   if (LONG_TEXT_FIELDS.has(name)) return true;
   // Pydantic не виставляє maxLength, але користувач може вручну.
   if (schema?.maxLength && schema.maxLength > 200) return true;
+  return false;
+}
+
+// Field має рендеритися як JSON-textarea, якщо:
+//   • declared type — `object` або `array`, АБО
+//   • name знайомий нам (`initial_data` / `params`), АБО
+//   • в `description` явно написано слово "JSON".
+// Остання евристика — щоб бекенд міг хінтувати UI без зміни Python-типу.
+function isJsonField(name, schema, type) {
+  if (JSON_TYPES.has(type)) return true;
+  if (JSON_FIELD_NAMES.has(name)) return true;
+  const desc = schema?.description || "";
+  if (typeof desc === "string" && /\bjson\b/i.test(desc)) return true;
   return false;
 }
 
@@ -194,16 +212,29 @@ function JsonInput({ value, onChange, disabled }) {
 function DynamicField({ name, schema, value, onChange, disabled }) {
   const { t } = useTranslation();
   const type = effectiveType(schema);
+  // Лейбл: спочатку i18n (`config.<name>`), потім бекендний `title`,
+  // потім сире ім'я ключа. Так фронтенд лишається універсальним для
+  // нових вузлів, а команда може поступово локалізовувати поля.
   const label = t(`config.${name}`, schema?.title || name);
+  // Підказка під полем: дослівно `description` зі схеми. Бекенд диктує —
+  // фронтенд показує. (Локалізація опційна через `config.<name>.hint`.)
+  const hint = t(`config.${name}.hint`, schema?.description || "");
 
   const safeValue = value !== undefined ? value : defaultForType(type, schema);
 
+  // Для boolean-полів зберігаємо інлайн-чекбокс із label праворуч,
+  // hint виводимо окремо знизу (щоб не ламати флекс-рядок).
   if (type === "boolean") {
     return (
-      <label className="mb-3 flex items-center gap-2 text-xs">
-        <BoolInput value={safeValue} onChange={onChange} disabled={disabled} />
-        <span className="text-nexus-muted">{label}</span>
-      </label>
+      <div className="mb-3 text-xs">
+        <label className="flex items-center gap-2">
+          <BoolInput value={safeValue} onChange={onChange} disabled={disabled} />
+          <span className="text-nexus-muted">{label}</span>
+        </label>
+        {hint && (
+          <div className="mt-1 pl-5 text-[11px] text-nexus-muted">{hint}</div>
+        )}
+      </div>
     );
   }
 
@@ -226,7 +257,7 @@ function DynamicField({ name, schema, value, onChange, disabled }) {
         disabled={disabled}
       />
     );
-  } else if (JSON_TYPES.has(type)) {
+  } else if (isJsonField(name, schema, type)) {
     control = (
       <JsonInput value={safeValue} onChange={onChange} disabled={disabled} />
     );
@@ -243,7 +274,11 @@ function DynamicField({ name, schema, value, onChange, disabled }) {
     );
   }
 
-  return <Field label={label}>{control}</Field>;
+  return (
+    <Field label={label} hint={hint}>
+      {control}
+    </Field>
+  );
 }
 
 export default function ConfigPanel({ node, onUpdate, onDelete, readonly }) {
@@ -261,6 +296,7 @@ export default function ConfigPanel({ node, onUpdate, onDelete, readonly }) {
 
   const type = node.data.type;
   const config = node.data.config || {};
+  const triggerRule = node.data.trigger_rule || "all_success";
   const schema = schemas[type];
   const configSchema = schema?.config_schema;
 
@@ -281,6 +317,11 @@ export default function ConfigPanel({ node, onUpdate, onDelete, readonly }) {
     });
   };
 
+  const updateTriggerRule = (value) => {
+    if (readonly) return;
+    onUpdate(node.id, { data: { ...node.data, trigger_rule: value } });
+  };
+
   return (
     <aside className="flex w-80 flex-col overflow-y-auto border-l border-nexus-border bg-nexus-panel p-3 text-sm">
       <div className="font-semibold">{t("config.heading")}</div>
@@ -293,6 +334,25 @@ export default function ConfigPanel({ node, onUpdate, onDelete, readonly }) {
         <div>
           <div className="opacity-70">{t("config.type")}</div>
           <div className="text-nexus-text">{t(`palette.${type}`, type)}</div>
+        </div>
+      </div>
+
+      {/* --- Системне налаштування: trigger rule (AND/OR на вхідні ребра) --- */}
+      <div className="mt-3 text-xs">
+        <div className="mb-1 text-nexus-muted">{t("config.triggerRule")}</div>
+        <select
+          className={inputClass}
+          disabled={readonly}
+          value={triggerRule}
+          onChange={(e) => updateTriggerRule(e.target.value)}
+        >
+          <option value="all_success">{t("config.allSuccess")}</option>
+          <option value="one_success">{t("config.oneSuccess")}</option>
+        </select>
+        <div className="mt-1 text-[11px] text-nexus-muted">
+          {triggerRule === "one_success"
+            ? t("config.oneSuccessHint")
+            : t("config.allSuccessHint")}
         </div>
       </div>
 
