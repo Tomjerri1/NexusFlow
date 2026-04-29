@@ -62,18 +62,23 @@ def test_topological_sort_diamond_keeps_partial_order():
 
 
 def test_topological_sort_detects_cycle():
-    wf = Workflow.model_validate(
-        {
-            "name": "cyc",
-            "nodes": [
-                {"id": "a", "type": "log", "config": {"message": "x"}},
-                {"id": "b", "type": "log", "config": {"message": "y"}},
-            ],
-            "edges": [{"from": "a", "to": "b"}, {"from": "b", "to": "a"}],
-        }
-    )
+    """Перевіряє низькорівневу поведінку `topological_sort` — створюємо
+    nodes/edges напряму, бо `Workflow.model_validate` з циклом тепер
+    впаде на власному pre-execution-валідаторі (див.
+    `test_workflow_rejects_cyclic_graph` у test_schemas.py).
+    """
+    from app.schemas.workflow import Edge as _Edge, Node as _Node
+
+    nodes = [
+        _Node(id="a", type="log", config={"message": "x"}),
+        _Node(id="b", type="log", config={"message": "y"}),
+    ]
+    edges = [
+        _Edge.model_validate({"from": "a", "to": "b"}),
+        _Edge.model_validate({"from": "b", "to": "a"}),
+    ]
     with pytest.raises(CycleDetectedError) as exc_info:
-        topological_sort(wf.nodes, wf.edges)
+        topological_sort(nodes, edges)
     assert exc_info.value.cycle_node_ids == ["a", "b"]
 
 

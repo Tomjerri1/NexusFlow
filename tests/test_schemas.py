@@ -67,6 +67,42 @@ def test_workflow_rejects_duplicate_node_ids():
         )
 
 
+def test_workflow_rejects_cyclic_graph():
+    """Workflow має бути DAG — двонаправлений зв'язок `A → B → A`
+    падає на валідаторі ще до запуску job'у. У повідомленні є слово
+    `cycle` і список вузлів-учасників (`['a', 'b']`).
+    """
+    with pytest.raises(ValidationError) as exc_info:
+        Workflow.model_validate(
+            {
+                "name": "cyc",
+                "nodes": [
+                    {"id": "a", "type": "log", "config": {"message": "x"}},
+                    {"id": "b", "type": "log", "config": {"message": "y"}},
+                ],
+                "edges": [
+                    {"from": "a", "to": "b"},
+                    {"from": "b", "to": "a"},
+                ],
+            }
+        )
+    text = str(exc_info.value)
+    assert "cycle" in text.lower()
+    assert "'a'" in text and "'b'" in text
+
+
+def test_workflow_rejects_self_loop():
+    """Self-loop A → A — теж цикл, теж має падати на валідаторі."""
+    with pytest.raises(ValidationError, match="cycle"):
+        Workflow.model_validate(
+            {
+                "name": "self_loop",
+                "nodes": [{"id": "a", "type": "log", "config": {"message": "x"}}],
+                "edges": [{"from": "a", "to": "a"}],
+            }
+        )
+
+
 def test_workflow_rejects_dangling_edge():
     with pytest.raises(ValidationError, match="unknown"):
         Workflow.model_validate(

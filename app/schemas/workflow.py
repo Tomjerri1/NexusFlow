@@ -226,4 +226,20 @@ class Workflow(BaseModel):
                 raise ValueError(f"Edge references unknown source node: {edge.from_node!r}")
             if edge.to_node not in node_id_set:
                 raise ValueError(f"Edge references unknown target node: {edge.to_node!r}")
+
+        # Перевірка ациклічності — гарантує DAG ще до запуску job'у.
+        # Імпорт лінивий: `app.core.scheduler` сам імпортує `Edge`/`Node`
+        # із цього ж модуля, тож top-level import дав би циркулярну
+        # залежність на час завантаження модуля. Лінива форма безпечна,
+        # бо валідатор викликається лише під час `model_validate`.
+        from app.core.scheduler import CycleDetectedError, topological_sort
+
+        try:
+            topological_sort(self.nodes, self.edges)
+        except CycleDetectedError as exc:
+            raise ValueError(
+                f"Workflow graph is not a DAG — cycle detected involving "
+                f"nodes: {exc.cycle_node_ids}"
+            ) from exc
+
         return self

@@ -125,9 +125,14 @@ def test_run_request_requires_one_of_two_fields(client: TestClient):
     assert r.status_code == 422
 
 
-def test_cycle_returns_400_with_specific_message(client: TestClient):
+def test_cycle_rejected_at_request_validation(client: TestClient):
+    """Цикл у графі тепер ловиться валідатором `Workflow.model_validate`,
+    тож FastAPI відповідає 422 (Pydantic body-validation), а не 400 від
+    runtime-перевірки. Тіло відповіді все одно містить ім'я порушення
+    («cycle») та список вузлів-учасників.
+    """
     r = client.post("/jobs/run", json=CYCLIC)
-    assert r.status_code == 400
+    assert r.status_code == 422, r.text
     assert "cycle" in r.text.lower()
     assert "['a', 'b']" in r.text
 

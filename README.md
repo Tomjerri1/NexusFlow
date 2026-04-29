@@ -14,6 +14,7 @@ JSON описує граф (вузли + ребра) → рушій тополо
 - [Збереження та завантаження сценаріїв](#збереження-та-завантаження-сценаріїв)
 - [Гібридна модель декларативного мапінгу](#гібридна-модель-декларативного-мапінгу)
 - [Автоматична конвертація типів між портами](#автоматична-конвертація-типів-між-портами)
+- [Перевірка ациклічності на етапі валідації](#перевірка-ациклічності-на-етапі-валідації)
 - [Пропуск «мертвих» гілок (dead-branch cascade)](#пропуск-мертвих-гілок-dead-branch-cascade)
 - [Trigger Rules (правила активації вузла)](#trigger-rules-правила-активації-вузла)
 - [Input Referencing (code-first скорочення)](#input-referencing-code-first-скорочення)
@@ -24,7 +25,6 @@ JSON описує граф (вузли + ребра) → рушій тополо
 - [Структура проєкту](#структура-проєкту)
 - [Тести](#тести)
 - [Як додати новий тип вузла](#як-додати-новий-тип-вузла)
-- [Обмеження MVP і майбутнє](#обмеження-mvp-і-майбутнє)
 
 ---
 
@@ -269,6 +269,48 @@ class WriteFileNode(BaseNode):
 - Якщо `target_handle` не вказано — працює **legacy merge**: усі виходи живих батьків зливаються у `context.current_input` (як у MVP).
 - `source_handle = "true" | "false"` досі означає гілку condition'а (а не порт даних) — двигун розпізнає це за іменем.
 - Маршрутизатор обгорнено у `try/except`: помилка мапінгу логується як `warning`, але не валить весь job — вузол отримає порожній вхід.
+
+## Перевірка ациклічності на етапі валідації
+
+`Workflow` — це DAG (directed acyclic graph). Перевірка проводиться **прямо у Pydantic-валідаторі** `_check_graph_integrity`, тож кожен сконструйований `Workflow`-обʼєкт гарантовано без циклів. Тобто якщо ваш код успішно зробив `Workflow.model_validate(...)` / `Workflow(...)` — далі по pipeline ніхто не побачить графа з циклом, і не доведеться писати «а раптом хтось десь...» захисти.
+
+### Як це працює
+
+У валідатор зашито:
+
+```python
+from app.core.scheduler import CycleDetectedError, topological_sort
+
+try:
+    topological_sort(self.nodes, self.edges)
+except CycleDetectedError as exc:
+    raise ValueError(
+        f"Workflow graph is not a DAG — cycle detected involving "
+        f"nodes: {exc.cycle_node_ids}"
+    ) from exc
+```
+
+Імпорт **лінивий** (всередині методу), бо `app.core.scheduler` сам тягне `Edge`/`Node` із цього ж модуля — top-level import дав би циркулярну залежність. Лінива форма безпечна: метод викликається лише під час `model_validate(...)`, на той момент модулі вже завантажені.
+
+### Що бачить користувач
+
+| Шлях входу                         | Поведінка                                                                  |
+|------------------------------------|----------------------------------------------------------------------------|
+| `Workflow.model_validate({...})`   | `pydantic.ValidationError` з повідомленням `… cycle detected involving nodes: ['a', 'b']` |
+| `Workflow(name=..., nodes=..., edges=...)` (Python API) | те саме `ValidationError`                          |
+| `POST /jobs/run` із циклом         | FastAPI повертає **HTTP 422** (Pydantic body-validation) з тим самим текстом |
+| `load_workflow("name_with_cycle")` | `ValidationError` із `model_validate_json` — завантажити збережений сценарій з циклом неможливо |
+
+### Покрите тестами
+
+- `tests/test_schemas.py::test_workflow_rejects_cyclic_graph` — `A→B`, `B→A` → ValidationError зі словом `cycle` та переліком `['a', 'b']` у тексті.
+- `tests/test_schemas.py::test_workflow_rejects_self_loop` — навіть `A→A` (self-loop) ловиться.
+- `tests/test_api.py::test_cycle_rejected_at_request_validation` — кінець-в-кінець через REST: 422 + потрібний текст.
+- `tests/test_engine.py::test_topological_sort_detects_cycle` — низькорівнева перевірка `topological_sort` із прямим створенням `Node`/`Edge` (без `Workflow`-валідації).
+
+> **Чому 422, а не 400.** Pydantic-валідація тіла запиту триггерить стандартний FastAPI-`RequestValidationError`, який мапиться у `HTTP 422 Unprocessable Entity` — це коректніший статус для невалідного вхідного payload'у, ніж 400 (загальна «bad request»). Тіло відповіді ідентифікує цикл за словом `cycle` та списком вузлів.
+
+---
 
 ## Пропуск «мертвих» гілок (dead-branch cascade)
 
@@ -578,7 +620,7 @@ ws.onmessage = (e) => console.log(JSON.parse(e.data));
 | Модуль | Відповідальність |
 |---|---|
 | `app/api/workflows.py` | CRUD над JSON-файлами в `workflows/` |
-| `app/api/jobs.py` | приймає `POST /jobs/run`, робить **pre-check** на цикл, делегує `JobManager` |
+| `app/api/jobs.py` | приймає `POST /jobs/run`, делегує `JobManager` (перевірка ациклічності тепер у `Workflow`-валідаторі — request-body відсіюється FastAPI до handler'а) |
 | `app/api/websocket.py` | WS-підписка з replay'ем історії — щоб пізні підписники не пропустили нічого |
 | `app/core/scheduler.py` | топологічне сортування Kahn'а, `CycleDetectedError` |
 | `app/core/engine.py` | прогін DAG, обробка `condition`-розгалужень через `dead_edges` |
@@ -695,7 +737,7 @@ pytest                                                                # усі �
 pytest --cov=app.core --cov=app.nodes --cov-report=term-missing       # з покриттям
 ```
 
-Поточний стан: **110 passed** (включно з тестами на `is_readonly`-каскад на ребрах, auto-conversion типів між портами, dead-branch cascade на 3+ рівні нащадків, `trigger_rule` AND/OR-семантику, `inputs`-shorthand для code-first генерації ребер та fan-in через списки джерел).
+Поточний стан: **112 passed** (включно з тестами на `is_readonly`-каскад на ребрах, auto-conversion типів між портами, dead-branch cascade на 3+ рівні нащадків, `trigger_rule` AND/OR-семантику, `inputs`-shorthand для code-first генерації ребер, fan-in через списки джерел та pre-execution-перевірку ациклічності у Pydantic-валідаторі).
 
 ### Frontend
 ```bash
