@@ -20,19 +20,19 @@ class ReadFileNode(BaseNode):
     type_name = "read_file"
     config_model = ReadFileConfig
 
-    async def execute(self, context: ExecutionContext) -> dict:
-        # Пріоритет: port `path` → config.path → ключ `path` з current_input.
-        port_value = context.node_inputs.get(self.id, {}).get("path")
+    async def execute(self, context: ExecutionContext, input_data: dict) -> dict:
+        # Пріоритет: port `path` → config.path → ключ `path` з input_data.
+        port_value = context.get_input(self.id, "path")
         if isinstance(port_value, str) and port_value:
             raw_path = port_value
         elif self.config.path:
             raw_path = self.config.path
         else:
-            raw_path = str(context.current_input.get("path", ""))
+            raw_path = str(input_data.get("path", ""))
         if not raw_path:
             raise ValueError("read_file: no path provided (port/config/input all empty)")
 
-        path = context.resolve_template(raw_path)
+        path = context.resolve_template(raw_path, input_data)
         async with aiofiles.open(path, mode="r", encoding=self.config.encoding) as f:
             content = await f.read()
         return {"content": content, "size": len(content), "path": path}

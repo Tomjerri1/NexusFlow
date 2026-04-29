@@ -27,23 +27,22 @@ class LogNode(BaseNode):
     """Логує повідомлення (з підстановкою шаблонів) і пробрасує input далі.
 
     Якщо ні з порту `message`, ні з `config.message` нічого не прийшло —
-    замість порожнього рядка дампимо весь `current_input` як JSON. Це
-    робить вузол корисним «з коробки»: достатньо підключити лінію.
+    замість порожнього рядка дампимо весь `input_data` як JSON.
     """
 
     type_name = "log"
     config_model = LogNodeConfig
 
-    async def execute(self, context: ExecutionContext) -> dict:
+    async def execute(self, context: ExecutionContext, input_data: dict) -> dict:
         port_message = context.get_input(self.id, "message")
         raw = port_message if isinstance(port_message, str) and port_message else self.config.message
 
         if raw:
-            message = context.resolve_template(raw)
+            message = context.resolve_template(raw, input_data)
         else:
             try:
                 message = json.dumps(
-                    context.current_input,
+                    input_data,
                     ensure_ascii=False,
                     default=_json_safe,
                 )
@@ -51,4 +50,4 @@ class LogNode(BaseNode):
                 message = f"<input not serializable: {exc}>"
 
         await context.log(self.id, message, level=self.config.level)
-        return dict(context.current_input)
+        return dict(input_data)

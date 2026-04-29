@@ -15,11 +15,7 @@ class CustomCodeError(RuntimeError):
 
 
 def _load_script_module(script_name: str):
-    """Динамічно імпортує модуль із sandbox-папки `scripts/`.
-
-    Якщо модуль уже завантажений — перезавантажує (щоб правки в .py
-    підхоплювалися без рестарту). Файли поза `scripts/` заборонені.
-    """
+    """Динамічно імпортує модуль із sandbox-папки `scripts/`."""
     safe_name = Path(script_name).name
     if safe_name != script_name or not safe_name:
         raise CustomCodeError(f"invalid script_name {script_name!r}")
@@ -64,13 +60,13 @@ class CustomCodeNode(BaseNode):
 
     Контракт користувацької функції:
         async def main(input: dict, nodes: dict, **params) -> dict | None
-    Якщо повертає None — нормалізуємо в `{}`, щоб не порушити контракт engine.
+    Якщо повертає None — нормалізуємо в `{}`.
     """
 
     type_name = "custom_code"
     config_model = CustomCodeConfig
 
-    async def execute(self, context: ExecutionContext) -> dict:
+    async def execute(self, context: ExecutionContext, input_data: dict) -> dict:
         module = _load_script_module(self.config.script_name)
 
         func = getattr(module, self.config.entry_point, None)
@@ -85,7 +81,7 @@ class CustomCodeNode(BaseNode):
             )
 
         result = await func(
-            input=dict(context.current_input),
+            input=dict(input_data),
             nodes=dict(context.node_outputs),
             **self.config.params,
         )

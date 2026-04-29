@@ -24,26 +24,21 @@ class ExpressionNode(BaseNode):
     """Гнучкий обчислювач: повертає `{"result": <value>}` для будь-якого виразу.
 
     Доступні імена у виразі:
-      - `input` — поточний вхід вузла (dict)
-      - `nodes` — `dict[node_id, output_dict]` усіх попередніх вузлів
-    Дот-нотація (`input.size`, `nodes.r1.path`) переписується у subscript,
-    як і у ConditionNode.
+      - `input` — локальний `input_data`, переданий двигуном
+      - `nodes` — snapshot `node_outputs` усіх попередніх вузлів
     """
 
     type_name = "expression"
     config_model = ExpressionConfig
 
-    async def execute(self, context: ExecutionContext) -> dict:
+    async def execute(self, context: ExecutionContext, input_data: dict) -> dict:
         port_expr = context.get_input(self.id, "expression")
         expression = port_expr if isinstance(port_expr, str) and port_expr else self.config.expression
 
         rewritten = _rewrite_dot_access(expression)
         evaluator = EvalWithCompoundTypes(
-            names={"input": context.current_input, "nodes": context.node_outputs}
+            names={"input": dict(input_data), "nodes": dict(context.node_outputs)}
         )
-        # `simpleeval` піднімає різні винятки (InvalidExpression, KeyError,
-        # SyntaxError при парсингу AST тощо). Обгортаємо все у єдиний типовий
-        # ExpressionEvalError, щоб engine давав однаковий контракт помилок.
         try:
             value = evaluator.eval(rewritten)
         except Exception as exc:

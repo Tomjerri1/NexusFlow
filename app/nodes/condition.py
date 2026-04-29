@@ -8,8 +8,6 @@ from app.schemas.node_configs import ConditionConfig
 
 # `simpleeval` не дає атрибутного доступу за замовчуванням.
 # Переписуємо `input.size` -> `input["size"]`, `nodes.r1.path` -> `nodes["r1"]["path"]`.
-# Це дозволяє писати у виразах звичну dot-нотацію, а під капотом
-# simpleeval працює через підписку (subscript), що йому дозволено.
 _DOT_ACCESS = re.compile(r"\b(input|nodes)((?:\.[a-zA-Z_][a-zA-Z0-9_]*)+)")
 
 
@@ -41,17 +39,18 @@ class ConditionNode(BaseNode):
     """Безпечне обчислення булевого виразу.
 
     Доступні імена у виразі:
-      - `input` — поточний вхід вузла (dict)
-      - `nodes` — `dict[node_id, output_dict]` усіх попередніх вузлів
+      - `input` — локальний `input_data`, переданий двигуном
+      - `nodes` — snapshot `node_outputs` усіх попередніх вузлів
     """
 
     type_name = "condition"
     config_model = ConditionConfig
 
-    async def execute(self, context: ExecutionContext) -> dict:
+    async def execute(self, context: ExecutionContext, input_data: dict) -> dict:
         rewritten = _rewrite_dot_access(self.config.expression)
+        # Snapshot node_outputs, щоб уникнути race-condition із паралельними воркерами.
         evaluator = EvalWithCompoundTypes(
-            names={"input": context.current_input, "nodes": context.node_outputs}
+            names={"input": dict(input_data), "nodes": dict(context.node_outputs)}
         )
         try:
             value = evaluator.eval(rewritten)
@@ -60,4 +59,4 @@ class ConditionNode(BaseNode):
                 f"Failed to evaluate {self.config.expression!r}: {exc}"
             ) from exc
 
-        return {"result": bool(value), "input": context.current_input}
+        return {"result": bool(value), "input": dict(input_data)}

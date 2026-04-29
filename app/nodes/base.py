@@ -191,7 +191,19 @@ class BaseNode(ABC):
         self.config = self.config_model(**config)
 
     @abstractmethod
-    async def execute(self, context: "ExecutionContext") -> dict:
+    async def execute(
+        self,
+        context: "ExecutionContext",
+        input_data: dict,
+    ) -> dict:
+        """Виконати логіку вузла.
+
+        :param context: спільний (потокобезпечний) стан запуску.
+        :param input_data: локальний словник вхідних даних, сформований
+            двигуном саме для цього виклику. Замість колишнього
+            `context.current_input`: data isolation на параметр функції,
+            що знімає race-condition між паралельними воркерами.
+        """
         ...
 
     @classmethod

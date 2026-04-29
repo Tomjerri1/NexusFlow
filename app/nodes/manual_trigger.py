@@ -17,5 +17,5 @@ class ManualTriggerNode(BaseNode):
     type_name = "manual_trigger"
     config_model = ManualTriggerConfig
 
-    async def execute(self, context: ExecutionContext) -> dict:
+    async def execute(self, context: ExecutionContext, input_data: dict) -> dict:
         return dict(self.config.initial_data)

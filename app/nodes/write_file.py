@@ -46,40 +46,35 @@ class WriteFileNode(BaseNode):
     config_model = WriteFileConfig
 
     def _port_str(self, context: ExecutionContext, port: str) -> str | None:
-        """Повертає непорожній рядок саме з port-mapping, інакше None.
-
-        Бере значення безпосередньо з `node_inputs[self.id][port]`, щоб
-        відрізнити «порт не приєднаний» від «значення взялося з legacy
-        merged-input» — це важливо для коректного fallback на config.
-        """
+        """Повертає непорожній рядок саме з port-mapping, інакше None."""
         port_map = context.node_inputs.get(self.id, {})
         value = port_map.get(port)
         if isinstance(value, str) and value:
             return value
         return None
 
-    async def execute(self, context: ExecutionContext) -> dict:
+    async def execute(self, context: ExecutionContext, input_data: dict) -> dict:
         # Пріоритет джерел даних (як для path, так і для content):
         #   1. Значення з порту (port-mapping від попереднього вузла).
         #   2. Поле з config.
-        #   3. Ключ із current_input (legacy merge).
+        #   3. Ключ із input_data (legacy merge).
         raw_path = (
             self._port_str(context, "path")
             or self.config.path
-            or str(context.current_input.get("path", ""))
+            or str(input_data.get("path", ""))
         )
         if not raw_path:
             raise ValueError("write_file: no path provided (port/config/input all empty)")
-        rendered = context.resolve_template(raw_path)
+        rendered = context.resolve_template(raw_path, input_data)
         path = _resolve_safe_path(rendered)
 
         port_content = self._port_str(context, "content")
         if port_content is not None:
-            content = context.resolve_template(port_content)
+            content = context.resolve_template(port_content, input_data)
         elif self.config.content is not None:
-            content = context.resolve_template(self.config.content)
+            content = context.resolve_template(self.config.content, input_data)
         else:
-            raw_content = context.current_input.get(self.config.content_key, "")
+            raw_content = input_data.get(self.config.content_key, "")
             content = raw_content if isinstance(raw_content, str) else str(raw_content)
 
         path.parent.mkdir(parents=True, exist_ok=True)

@@ -1,15 +1,18 @@
 # NexusFlow
 
 **Візуальний конструктор workflow-сценаріїв.**
-JSON описує граф (вузли + ребра) → рушій топологічно сортує → виконує вузли асинхронно → стрімить логи через WebSocket.
+JSON описує граф (вузли + ребра) → рушій будує черги готових вузлів і виконує їх **паралельно у воркер-пулі** → стрімить логи через WebSocket.
 
 Аналог n8n / Node-RED, максимально простий. UI — React Flow редактор з drag-and-drop і live-логами; backend — FastAPI + asyncio. Авто-документація API вимкнена: фронтенд — єдина точка входу.
+
+> **Async Ready Pool.** Двигун — не «for node in topological_sort», а пул із 6 воркер-задач, які наввипередки беруть вузли з `asyncio.Queue` готовності. Дві незалежні гілки з `asyncio.sleep(1)` фінішують ~за 1 секунду, а не за 2. Усі мутації стану — атомарні під `asyncio.Lock`, тож вузли запускаються у чергу рівно один раз. Перша критична помилка виставляє `should_stop=True`: нові вузли не стартують, але вже запущені дограють до кінця (м'яка зупинка, без cancel'ів посеред I/O).
 
 ---
 
 ## Зміст
 
 - [Швидкий старт](#швидкий-старт)
+- [Async Ready Pool — паралельний двигун](#async-ready-pool--паралельний-двигун)
 - [Frontend (React Flow редактор)](#frontend-react-flow-редактор)
 - [Збереження та завантаження сценаріїв](#збереження-та-завантаження-сценаріїв)
 - [Гібридна модель декларативного мапінгу](#гібридна-модель-декларативного-мапінгу)
@@ -63,6 +66,95 @@ Editor на `http://localhost:5173`. Vite dev-сервер проксить `/jo
 curl http://localhost:8000/health
 # {"status":"ok"}
 ```
+
+---
+
+## Async Ready Pool — паралельний двигун
+
+Раніше двигун був послідовний: топологічно відсортував — і пройшовся `for node in sorted_nodes`. Це коректно, але **марнує паралельність**: дві незалежні гілки чекали одна одну. У новій версії `WorkflowEngine` — **Async Ready Pool**:
+
+```
+                  ┌──────────────┐
+                  │ ready_queue  │  asyncio.Queue (готові вузли)
+                  └──────┬───────┘
+                ┌────────┼────────┬────────┐
+                ▼        ▼        ▼        ▼
+            ┌─────┐  ┌─────┐  ┌─────┐  ┌─────┐
+            │ W1  │  │ W2  │  │ W3  │  │ … 6 │   фіксовані воркери
+            └──┬──┘  └──┬──┘  └──┬──┘  └──┬──┘
+               │        │        │        │
+               ▼        ▼        ▼        ▼
+            execute  execute  execute  execute    одночасно
+               │        │        │        │
+               └────────┴───┬────┴────────┘
+                            ▼
+                   ┌──────────────────┐
+                   │  state.lock      │  атомарне оновлення:
+                   │  + dead_edges    │   • node_outputs[id] = output
+                   │  + finished      │   • children: in_degree--
+                   │  + scheduled     │   • готові → put у чергу
+                   └──────────────────┘
+```
+
+### Що це дає
+
+| Сценарій                                | Послідовний двигун | Async Ready Pool |
+|-----------------------------------------|--------------------|------------------|
+| 2 паралельні I/O-вузли по 1 с           | ~2 с               | **~1 с**         |
+| 6 паралельних вузлів × 0.5 с            | ~3 с               | **~0.5 с**       |
+| 1 вузол падає, інший паралельний працює | помилка одразу     | падючий зупиняє пул, інший дограє |
+
+Покрито тестами `test_two_parallel_sleeps_finish_in_about_one_second`, `test_six_parallel_sleeps_within_worker_pool_limit`, `test_failure_in_one_branch_lets_running_finish_but_blocks_new`.
+
+### Гарантії потокобезпеки (`app/core/context.py`)
+
+- `ExecutionContext.lock` — `asyncio.Lock` для всіх мутацій спільного стану.
+- `should_stop: bool` — м'який прапорець зупинки. Воркер перевіряє його **перед** тим, як забрати наступний вузол із черги; уже запущений вузол виконується до кінця.
+- `first_error: BaseException | None` — перша критична помилка, яку рушій передасть `JobManager` після того, як активні воркери дограли (job → `FAILED`).
+- `resolve_template(template, input_data)` створює локальні snapshot'и `dict(self.node_outputs)` та `dict(input_data)` перед ітерацією — це уникає `RuntimeError: dictionary changed size during iteration`, коли паралельний воркер пише в `node_outputs` під час підстановки.
+- **Глобального `current_input` немає.** Вхідні дані формуються двигуном **локально** для кожного виклику й передаються як параметр у `execute(context, input_data)` — це data isolation на рівні параметра функції, race-condition між паралельними вузлами неможлива в принципі.
+
+### Атомарність переводу нащадків у `ready`
+
+Контракт «нащадок потрапляє у чергу рівно один раз» захищено `state.lock` у `_finalize_node`:
+
+```python
+async with state.lock:
+    state.finished.add(node.id)             # фінішуємо себе
+    state.pending_count -= 1
+    # для condition: проштампувати «не обрану» гілку як dead_edge
+    # ...
+    ready_now = await self._propagate_finish(state, context, node.id)
+# put_nowait у чергу — поза lock, бо queue-операція потокобезпечна сама собою.
+for child_id in ready_now:
+    state.queue.put_nowait(child_id)
+```
+
+`_propagate_finish` для кожного нащадка викликає `_evaluate_child`, який повертає `'ready' | 'dead' | 'wait'`:
+
+- `all_success` (AND): один мертвий батько → `dead`. Усі живі та зафінішовані → `ready`. Інакше → `wait`.
+- `one_success` (OR): хоча б один живий батько зафінішував → `ready` (у момент ентрі двигун збере `input_data` від усіх батьків, що встигли). Усі батьки зафінішували, серед них немає живих → `dead`.
+
+«Смерть» поширюється каскадно: якщо нащадок переходить у `dead`, його теж додають у `pending_finished` і переоцінюють вже його нащадків.
+
+### `try / finally` навколо `execute()`
+
+```python
+try:
+    output = await node.execute(context, input_data)
+    success = True
+except Exception as exc:
+    await context.log(node.id, f"Error: {exc}", level="error")
+    context.request_stop(exc)        # перша помилка → should_stop=True
+finally:
+    await self._finalize_node(state, context, node_def, success, output)
+```
+
+`finally` гарантує: навіть коли вузол падає, його стан оновлюється і нащадки переоцінюються (стають мертвими). Це і є вимога атомарності з ТЗ.
+
+### Чому пул на 6 воркерів
+
+Дефолт `MAX_WORKERS=6` — компроміс між паралелізмом для I/O-важких графів і захистом від OOM на гігантських воркфлоу. Для тюнінгу під своє навантаження передайте інший ліміт у конструктор: `WorkflowEngine(max_workers=16)`. У продуктивному `JobManager` лишився дефолт.
 
 ---
 
@@ -238,7 +330,9 @@ class WriteFileNode(BaseNode):
     type_name = "write_file"
     config_model = WriteFileConfig
 
-    async def execute(self, context):
+    async def execute(self, context, input_data: dict):
+        # Локальний `input_data` — двигун передає його сам; глобального
+        # current_input більше немає (data isolation для паралельного пулу).
         path = context.get_input(self.id, "path") or self.config.path
         content = context.get_input(self.id, "content") or self.config.content
         ...
@@ -266,7 +360,7 @@ class WriteFileNode(BaseNode):
 
 Зворотна сумісність:
 
-- Якщо `target_handle` не вказано — працює **legacy merge**: усі виходи живих батьків зливаються у `context.current_input` (як у MVP).
+- Якщо `target_handle` не вказано — працює **legacy merge**: усі виходи живих батьків зливаються у локальний `input_data`, що передається у `execute(context, input_data)`. Шаблони `{input.foo}` читаються саме з нього.
 - `source_handle = "true" | "false"` досі означає гілку condition'а (а не порт даних) — двигун розпізнає це за іменем.
 - Маршрутизатор обгорнено у `try/except`: помилка мапінгу логується як `warning`, але не валить весь job — вузол отримає порожній вхід.
 
@@ -594,15 +688,15 @@ ws.onmessage = (e) => console.log(JSON.parse(e.data));
     │                        ▼          │               │
     │                  ┌─────────────┐  │               │
     │                  │WorkflowEngine│ │               │
-    │                  │              │ │               │
-    │                  │ topo sort →  │ │               │
-    │                  │ for node:    │ │               │
-    │                  │   collect    │ │               │
-    │                  │   input from │ │               │
-    │                  │   parents →  │ │               │
-    │                  │   execute →  │ │               │
-    │                  │   log        ├─┘               │
-    │                  └─────┬────────┘                 │
+    │                  │ Async Ready │  │               │
+    │                  │    Pool     │  │               │
+    │                  │             │  │               │
+    │                  │ ready_queue │  │               │
+    │                  │     ↕       │  │               │
+    │                  │ 6 workers ──┼──┘               │
+    │                  │     ↕       │                  │
+    │                  │ state.lock  │                  │
+    │                  └─────┬───────┘                  │
     │                        │                          │
     │                        ▼                          │
     │                  ┌─────────────┐                  │
@@ -622,11 +716,11 @@ ws.onmessage = (e) => console.log(JSON.parse(e.data));
 | `app/api/workflows.py` | CRUD над JSON-файлами в `workflows/` |
 | `app/api/jobs.py` | приймає `POST /jobs/run`, делегує `JobManager` (перевірка ациклічності тепер у `Workflow`-валідаторі — request-body відсіюється FastAPI до handler'а) |
 | `app/api/websocket.py` | WS-підписка з replay'ем історії — щоб пізні підписники не пропустили нічого |
-| `app/core/scheduler.py` | топологічне сортування Kahn'а, `CycleDetectedError` |
-| `app/core/engine.py` | прогін DAG, обробка `condition`-розгалужень через `dead_edges` |
+| `app/core/scheduler.py` | топологічне сортування Kahn'а, `CycleDetectedError` (тепер використовується лише як ациклічна перевірка перед стартом пулу) |
+| `app/core/engine.py` | **Async Ready Pool** — 6 паралельних воркерів, `asyncio.Queue` готових вузлів, атомарне поширення «фініш-сигналу» під `state.lock`, м'яка зупинка через `context.should_stop`, dead-edges каскад |
 | `app/core/job_manager.py` | реєстр `Job` + супервайзер `asyncio.create_task`, sentinel `done` після фінішу |
 | `app/core/log_broker.py` | pub/sub на `asyncio.Queue` per `job_id` |
-| `app/core/context.py` | `ExecutionContext` — спільна пам'ять між вузлами + `resolve_template` |
+| `app/core/context.py` | `ExecutionContext` — потокобезпечна спільна пам'ять (`asyncio.Lock`, `should_stop`, `first_error`) + `resolve_template(template, input_data)` зі snapshot'ами |
 | `app/nodes/base.py` | `BaseNode` ABC + `NODE_REGISTRY` + декоратори `@input_port`, `@output_port`, `@node_info`, `@static_connection`, `@register_node` + `get_schema()` |
 | `app/nodes/<name>.py` | реалізація конкретного вузла (один файл — один вузол) |
 | `app/schemas/` | Pydantic-моделі: `Workflow`, `Node`, `Edge`, `Job`, `LogEntry`, конфіги вузлів |
@@ -634,17 +728,22 @@ ws.onmessage = (e) => console.log(JSON.parse(e.data));
 
 ### Контракт виконання
 
-1. `POST /jobs/run` валідує JSON через Pydantic + робить топ-сорт → 400, якщо є цикл.
+1. `POST /jobs/run` валідує JSON через Pydantic + робить топ-сорт → 422, якщо є цикл.
 2. `JobManager.submit()` створює `Job(PENDING)`, запускає `asyncio.create_task(_run)` і повертає одразу 202.
-3. `WorkflowEngine.run()` йде по топологічно відсортованих вузлах:
-   - **Жива гілка?** — є хоч один вхідний edge, який не в `dead_edges` і чий батько не в `dead_nodes`. Якщо ні — вузол додається у `dead_nodes`, усі його outbound-ребра одразу штампуються у `dead_edges` (каскад), у логах з'являється `Skipped due to dead branch`.
+3. `WorkflowEngine.run()` стартує **Async Ready Pool**:
+   - **Pre-flight:** перевіряє типи всіх вузлів у `NODE_REGISTRY` + один прохід `topological_sort` як ациклічна перевірка (порядок виконання тепер диктує черга готовності, а не список).
+   - **Initial enqueue:** усі вузли без вхідних ребер кладуться у `ready_queue` під `state.lock`.
+   - **6 воркер-задач** (`max_workers=6` за замовчуванням) у циклі: перевіряють `context.should_stop` → беруть `node_id` із черги → формують локальний `input_data` (snapshot під lock'ом, без жодних мутацій спільного `current_input`) → викликають `execute(context, input_data)`.
+   - **`try / finally`:** результат записується у `node_outputs[id]` та поширюється на нащадків ATOMICALLY під `state.lock`:
+     - successful: condition-вузол додає не-обрану гілку у `dead_edges`.
+     - failed: вузол → `dead_nodes`, усі outbound-ребра → `dead_edges`, виставляється `should_stop=True` + запам'ятовується перша помилка.
+     - для кожного нащадка `_evaluate_child` повертає `ready` / `dead` / `wait` за `trigger_rule` (AND/OR); готові кладуться у чергу, мертві — каскадно поширюють «смерть».
    - **Маршрутизація даних:**
-     - `current_input` — мерджа виходів усіх живих батьків (legacy / шаблони `{input.x}`).
+     - `input_data` — локальний для виклику dict: merge виходів живих батьків + накладений зверху port-mapping (для шаблонів `{input.x}`).
      - `node_inputs[<id>][<port>]` — для ребер із `target_handle`: значення з `node_outputs[<from>][<source_handle>]` копіюється у конкретний вхідний порт. Доступне через `context.get_input(node_id, port_name)`.
      - Якщо `source_handle` ∈ {`"true"`, `"false"`} — це гілка condition'а, тому на target_handle потрапляє весь вихідний словник (а не порт даних).
      - Static-зв'язки з `@static_connection` додаються до набору ребер як readonly.
-   - **Виконання** через `NODE_REGISTRY[type](id, config).execute(ctx)`.
-   - Для `condition`-вузла: на основі `output["result"]` додаємо у `dead_edges` ребра з протилежним `source_handle`.
+   - **Termination:** як тільки `pending_count == 0` (усі вузли або зафінішували, або позначені мертвими) — `done_event` сигналить main-таск, який кладе `None`-sentinel'и для всіх воркерів і чекає `gather`. Якщо першу помилку було збережено — `run()` re-raise'ить її назовні (job → FAILED).
 4. Кожен крок логується через `ExecutionContext.log → LogBroker.publish` → попадає одночасно і в `job.logs` (підписка `JobManager`'а), і у WS-черги клієнтів.
 5. У `finally` `_run` публікує sentinel `LogEntry(level="done")` — WS-клієнти закривають з'єднання.
 
@@ -662,9 +761,9 @@ ws.onmessage = (e) => console.log(JSON.parse(e.data));
 
 ### Шаблони у конфігах
 
-`resolve_template` замінює:
-- `{input.foo}` / `{input.foo.bar}` — з `current_input`
-- `{nodes.<id>.foo}` — з `node_outputs`
+`resolve_template(template, input_data)` замінює:
+- `{input.foo}` / `{input.foo.bar}` — з локального `input_data`, переданого вузлу двигуном
+- `{nodes.<id>.foo}` — зі **snapshot'у** `node_outputs` (`dict(self.node_outputs)`, щоб уникнути race з паралельними воркерами)
 
 Невідомий ключ підставляється як `<missing:foo>` (fail-loud, але не падає).
 
@@ -721,10 +820,10 @@ nexusflow/
 │
 └── tests/
     ├── conftest.py             # FakeBroker, ctx-фікстура, sys.path
-    ├── test_schemas.py         # 20 тестів
-    ├── test_nodes.py           # 20 тестів
-    ├── test_engine.py          # 9 тестів (включно з прогоном 3 прикладів)
-    └── test_api.py             # 16 тестів (REST + WS)
+    ├── test_schemas.py         # схеми + DAG-валідація
+    ├── test_nodes.py           # юніт-тести 7 вузлів (тепер усі через execute(ctx, input_data))
+    ├── test_engine.py          # 3 приклади + dead-branch cascade + trigger_rule + Async Ready Pool (паралельність та failure isolation)
+    └── test_api.py             # REST + WS + /api/nodes/schema
 ```
 
 ---
@@ -737,7 +836,7 @@ pytest                                                                # усі �
 pytest --cov=app.core --cov=app.nodes --cov-report=term-missing       # з покриттям
 ```
 
-Поточний стан: **112 passed** (включно з тестами на `is_readonly`-каскад на ребрах, auto-conversion типів між портами, dead-branch cascade на 3+ рівні нащадків, `trigger_rule` AND/OR-семантику, `inputs`-shorthand для code-first генерації ребер, fan-in через списки джерел та pre-execution-перевірку ациклічності у Pydantic-валідаторі).
+Поточний стан: **117 passed** — попередні 112 тестів MVP + **5 нових Async Ready Pool тестів** (паралельне виконання двох гілок зі sleep'ами за ~1 c, 6-вузловий пул за ~0.5 c, м'яка зупинка одного брата при падінні іншого, блокування невзятого вузла після `should_stop`, snapshot-безпечні шаблони під паралельним записом).
 
 ### Frontend
 ```bash
@@ -806,10 +905,10 @@ class HttpRequestNode(BaseNode):
     type_name = "http_request"
     config_model = HttpRequestConfig
 
-    async def execute(self, context: ExecutionContext) -> dict:
+    async def execute(self, context: ExecutionContext, input_data: dict) -> dict:
         url_input = context.get_input(self.id, "url")
         raw = url_input if isinstance(url_input, str) and url_input else self.config.url
-        url = context.resolve_template(raw)
+        url = context.resolve_template(raw, input_data)
         async with httpx.AsyncClient(timeout=self.config.timeout_s) as client:
             response = await client.request(self.config.method, url)
         return {
@@ -819,7 +918,9 @@ class HttpRequestNode(BaseNode):
         }
 ```
 
-> Декоратори `@input_port` / `@output_port` / `@node_info` повністю опційні — без них вузол усе ще працює через legacy `current_input`-merge. Але якщо ти їх додаси, вузол одразу отримає коректну схему в `/api/nodes/schema` і динамічні хендли на канвасі.
+> Декоратори `@input_port` / `@output_port` / `@node_info` повністю опційні — без них вузол усе ще працює через legacy merge у `input_data`. Але якщо ти їх додаси, вузол одразу отримає коректну схему в `/api/nodes/schema` і динамічні хендли на канвасі.
+
+> **Важливо.** Підпис `execute()` тепер `(self, context, input_data)`. `input_data` — це готовий для цього виклику dict, який двигун зібрав з виходів живих батьків + port-mapping. Шаблони `{input.foo}` читаються саме з нього (`context.resolve_template(template, input_data)`). Глобального `current_input` більше немає — це гарантія data isolation у паралельному пулі.
 
 ### Крок 4: (вже зроблено) — auto-discovery
 

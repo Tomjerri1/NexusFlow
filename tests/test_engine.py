@@ -516,31 +516,34 @@ async def test_trigger_rule_one_success_skipped_when_all_inputs_dead(
     assert "merge" not in result
 
 
-async def test_dead_node_marks_outgoing_edges_dead():
-    """Прямий unit-тест на каскад: `_mark_node_dead` стампує усі
-    вихідні ребра у `dead_edges`.
+async def test_kill_marks_outgoing_edges_dead():
+    """Прямий unit-тест на каскад: `_kill` додає вузол у `dead_nodes`
+    і стампує усі його вихідні ребра у `dead_edges`. Це гарант того, що
+    наступне `_evaluate_child` побачить нащадків мертвої гілки як мертвих.
     """
-    from app.core.engine import WorkflowEngine, _edge_key
-    from app.schemas.workflow import Edge as _Edge, Node as _Node
+    from app.core.engine import WorkflowEngine, _RunState, _edge_key
+    from app.schemas.workflow import Edge as _Edge, Node as _Node, Workflow as _Wf
 
-    nodes = [
-        _Node.model_construct(id="a", type="log", config={}),
-        _Node.model_construct(id="b", type="log", config={}),
-        _Node.model_construct(id="c", type="log", config={}),
-    ]
-    edges = [
-        _Edge.model_validate({"from": "a", "to": "b"}),
-        _Edge.model_validate({"from": "a", "to": "c"}),
-        _Edge.model_validate({"from": "b", "to": "c"}),
-    ]
-    dead_nodes: set[str] = set()
-    dead_edges: set = set()
+    wf = _Wf.model_construct(
+        name="kill_test",
+        nodes=[
+            _Node.model_construct(id="a", type="log", config={}),
+            _Node.model_construct(id="b", type="log", config={}),
+            _Node.model_construct(id="c", type="log", config={}),
+        ],
+        edges=[
+            _Edge.model_validate({"from": "a", "to": "b"}),
+            _Edge.model_validate({"from": "a", "to": "c"}),
+            _Edge.model_validate({"from": "b", "to": "c"}),
+        ],
+    )
+    state = _RunState.build(wf, list(wf.edges))
 
-    WorkflowEngine._mark_node_dead(nodes[0], edges, dead_nodes, dead_edges)
-    assert "a" in dead_nodes
-    assert _edge_key(edges[0]) in dead_edges  # a→b
-    assert _edge_key(edges[1]) in dead_edges  # a→c
-    assert _edge_key(edges[2]) not in dead_edges  # b→c (не від a)
+    WorkflowEngine._kill(state, "a")
+    assert "a" in state.dead_nodes
+    assert _edge_key(wf.edges[0]) in state.dead_edges  # a→b
+    assert _edge_key(wf.edges[1]) in state.dead_edges  # a→c
+    assert _edge_key(wf.edges[2]) not in state.dead_edges  # b→c (не від a)
 
 
 async def test_condition_false_branch_executes_when_expression_false(
@@ -566,3 +569,262 @@ async def test_condition_false_branch_executes_when_expression_false(
     assert result["c1"]["result"] is False
     assert "lf" in result
     assert "lt" not in result
+
+
+# ---------- engine: Async Ready Pool — паралелізм та м'яка зупинка ----------
+
+import asyncio as _asyncio
+import time as _time
+
+from pydantic import BaseModel as _BaseModel
+
+from app.nodes.base import NODE_REGISTRY as _REG, BaseNode as _BaseNode, output_port as _output_port
+
+
+class _SleepConfig(_BaseModel):
+    delay: float = 0.5
+    label: str = ""
+
+
+@_output_port("output", type_hint="dict")
+class _SleeperNode(_BaseNode):
+    """Тест-вузол: засинає на `config.delay` секунд і повертає мітку."""
+
+    type_name = "test_sleeper"
+    config_model = _SleepConfig
+
+    async def execute(self, context, input_data: dict) -> dict:
+        await _asyncio.sleep(self.config.delay)
+        return {"slept": self.config.delay, "label": self.config.label}
+
+
+class _FailConfig(_BaseModel):
+    delay: float = 0.0
+    message: str = "boom"
+
+
+@_output_port("output", type_hint="dict")
+class _FailerNode(_BaseNode):
+    """Тест-вузол: опційно засинає, потім піднімає RuntimeError."""
+
+    type_name = "test_failer"
+    config_model = _FailConfig
+
+    async def execute(self, context, input_data: dict) -> dict:
+        if self.config.delay > 0:
+            await _asyncio.sleep(self.config.delay)
+        raise RuntimeError(self.config.message)
+
+
+@pytest.fixture
+def custom_test_nodes():
+    """Тимчасово реєструє тестові вузли test_sleeper / test_failer
+    у NODE_REGISTRY і прибирає їх після тесту, щоб не протікати між
+    тестами та не псувати /api/nodes/schema у тестах API.
+    """
+    _REG["test_sleeper"] = _SleeperNode
+    _REG["test_failer"] = _FailerNode
+    yield
+    _REG.pop("test_sleeper", None)
+    _REG.pop("test_failer", None)
+
+
+def _construct_wf(name: str, nodes: list, edges: list):
+    """Будує Workflow в обхід `Literal[NodeType]`-перевірки — потрібно для
+    тест-вузлів, що не входять у production-набір."""
+    from app.schemas.workflow import Edge as _E, Node as _N, Workflow as _W
+
+    return _W.model_construct(
+        name=name,
+        nodes=[_N.model_construct(**n) for n in nodes],
+        edges=[_E.model_validate(e) for e in edges],
+        is_readonly=False,
+    )
+
+
+async def test_two_parallel_sleeps_finish_in_about_one_second(
+    ctx: ExecutionContext, custom_test_nodes
+):
+    """Доводить, що рушій справді запускає вузли паралельно.
+
+    Граф: один тригер → дві гілки по 1 секунді сну.
+    Якщо двигун послідовний — час буде ~2 с.
+    Якщо паралельний (Async Ready Pool) — ~1 с.
+    """
+    wf = _construct_wf(
+        "parallel_sleeps",
+        nodes=[
+            {"id": "t", "type": "manual_trigger", "config": {}},
+            {"id": "s1", "type": "test_sleeper",
+             "config": {"delay": 1.0, "label": "A"}},
+            {"id": "s2", "type": "test_sleeper",
+             "config": {"delay": 1.0, "label": "B"}},
+        ],
+        edges=[
+            {"from": "t", "to": "s1"},
+            {"from": "t", "to": "s2"},
+        ],
+    )
+
+    start = _time.monotonic()
+    result = await _run(wf, ctx)
+    elapsed = _time.monotonic() - start
+
+    assert "s1" in result and "s2" in result
+    assert result["s1"]["label"] == "A"
+    assert result["s2"]["label"] == "B"
+    # Запас на накладні витрати planner'а; послідовне виконання було б ~2 с.
+    assert elapsed < 1.7, (
+        f"expected ~1s parallel execution, got {elapsed:.2f}s "
+        f"— це натяк на втрату паралелізму у воркер-пулі"
+    )
+
+
+async def test_six_parallel_sleeps_within_worker_pool_limit(
+    ctx: ExecutionContext, custom_test_nodes
+):
+    """6 паралельних гілок вкладаються у дефолтний пул (MAX_WORKERS=6)
+    і фінішують за ~`delay` секунд, а не за `6 × delay`."""
+    delay = 0.5
+    nodes = [{"id": "t", "type": "manual_trigger", "config": {}}]
+    edges = []
+    for i in range(6):
+        sid = f"s{i}"
+        nodes.append({
+            "id": sid, "type": "test_sleeper",
+            "config": {"delay": delay, "label": str(i)},
+        })
+        edges.append({"from": "t", "to": sid})
+
+    wf = _construct_wf("parallel_six", nodes=nodes, edges=edges)
+
+    start = _time.monotonic()
+    result = await _run(wf, ctx)
+    elapsed = _time.monotonic() - start
+
+    for i in range(6):
+        assert f"s{i}" in result
+    # Послідовне було б ~3 с; паралельне ~0.5 с + накладні.
+    assert elapsed < 1.5, f"expected ~{delay}s, got {elapsed:.2f}s"
+
+
+async def test_failure_in_one_branch_lets_running_finish_but_blocks_new(
+    ctx: ExecutionContext, custom_test_nodes
+):
+    """Семантика «м'якої зупинки»:
+
+      • один з паралельних вузлів падає з помилкою → `should_stop=True`,
+      • вже запущений сусідній вузол має дограти до кінця (не cancel'иться),
+      • нащадки впалого вузла НЕ стартують (їх відсікає dead-каскад).
+
+    Граф:
+        t ─┬─→ s_long  (sleep 0.4s, паралельно з fail)
+           └─→ fail    (raise одразу)
+                  └─→ after_fail (має пропуститися як dead)
+    """
+    wf = _construct_wf(
+        "fail_isolation",
+        nodes=[
+            {"id": "t", "type": "manual_trigger", "config": {}},
+            {"id": "s_long", "type": "test_sleeper",
+             "config": {"delay": 0.4, "label": "long"}},
+            {"id": "fail", "type": "test_failer",
+             "config": {"message": "branch boom"}},
+            {"id": "after_fail", "type": "test_sleeper",
+             "config": {"delay": 0.1, "label": "after"}},
+        ],
+        edges=[
+            {"from": "t", "to": "s_long"},
+            {"from": "t", "to": "fail"},
+            {"from": "fail", "to": "after_fail"},
+        ],
+    )
+
+    start = _time.monotonic()
+    with pytest.raises(RuntimeError, match="branch boom"):
+        await _run(wf, ctx)
+    elapsed = _time.monotonic() - start
+
+    # s_long встиг дограти — рушій НЕ кенселить запущених.
+    assert "s_long" in ctx.node_outputs
+    assert ctx.node_outputs["s_long"]["label"] == "long"
+
+    # after_fail — нащадок мертвої гілки → execute() не викликався.
+    assert "after_fail" not in ctx.node_outputs
+
+    # Прапорець м'якої зупинки залишився виставленим.
+    assert ctx.should_stop is True
+    assert isinstance(ctx.first_error, RuntimeError)
+
+    # Час ~ delay s_long'а, а не 0 (бо чекали його завершення).
+    assert elapsed >= 0.35, (
+        f"expected to wait for s_long (~0.4s), finished in {elapsed:.2f}s"
+    )
+
+
+async def test_failure_does_not_start_pending_independent_node(
+    ctx: ExecutionContext, custom_test_nodes
+):
+    """Якщо помилка трапляється до того, як воркер встиг забрати з черги
+    незалежний вузол — той вузол НЕ виконається (`should_stop` ловиться
+    на вході в worker-loop).
+
+    Тут гарантуємо ситуацію: ставимо max_workers=1, щоб черга гарантовано
+    мала «непочатий» вузол на момент фейлу.
+    """
+    from app.core.engine import WorkflowEngine as _WE
+
+    wf = _construct_wf(
+        "fail_blocks_pending",
+        nodes=[
+            {"id": "t", "type": "manual_trigger", "config": {}},
+            {"id": "fail", "type": "test_failer",
+             "config": {"message": "early boom"}},
+            {"id": "independent", "type": "test_sleeper",
+             "config": {"delay": 0.05, "label": "ind"}},
+        ],
+        edges=[
+            {"from": "t", "to": "fail"},
+            {"from": "t", "to": "independent"},
+        ],
+    )
+
+    engine = _WE(max_workers=1)
+    with pytest.raises(RuntimeError, match="early boom"):
+        await engine.run(wf, ctx.job_id, ctx)
+
+    # При одному воркері: t → fail → fail падає → should_stop=True → independent
+    # дочекалася в черзі і її не запустили.
+    assert "fail" not in ctx.node_outputs  # впав
+    assert "independent" not in ctx.node_outputs  # не стартував через should_stop
+
+
+async def test_resolve_template_uses_snapshot_under_concurrent_writes(
+    ctx: ExecutionContext, custom_test_nodes
+):
+    """Поки один вузол робить `resolve_template`, інші вузли можуть писати
+    нові виходи у `node_outputs`. resolve_template має зробити локальний
+    snapshot, тож гонка не призведе до RuntimeError.
+
+    Тестуємо непрямо: запускаємо граф, де багато паралельних вузлів пишуть
+    у node_outputs, а log-вузли читають через шаблони. Якщо snapshot
+    не зробити — падало б `RuntimeError: dictionary changed size`.
+    """
+    nodes = [{"id": "t", "type": "manual_trigger",
+              "config": {"initial_data": {"label": "X"}}}]
+    edges = []
+    for i in range(8):
+        sid = f"s{i}"
+        lid = f"l{i}"
+        nodes.append({"id": sid, "type": "test_sleeper",
+                      "config": {"delay": 0.05, "label": str(i)}})
+        nodes.append({"id": lid, "type": "log",
+                      "config": {"message": "tick {input.label}"}})
+        edges.append({"from": "t", "to": sid})
+        edges.append({"from": "t", "to": lid})
+
+    wf = _construct_wf("snapshot_race", nodes=nodes, edges=edges)
+    result = await _run(wf, ctx)
+    for i in range(8):
+        assert f"s{i}" in result
+        assert f"l{i}" in result
