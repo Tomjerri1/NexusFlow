@@ -16,6 +16,7 @@ JSON описує граф (вузли + ребра) → рушій тополо
 - [Автоматична конвертація типів між портами](#автоматична-конвертація-типів-між-портами)
 - [Пропуск «мертвих» гілок (dead-branch cascade)](#пропуск-мертвих-гілок-dead-branch-cascade)
 - [Trigger Rules (правила активації вузла)](#trigger-rules-правила-активації-вузла)
+- [Input Referencing (code-first скорочення)](#input-referencing-code-first-скорочення)
 - [Read-only режим (Static Connections)](#readonly-режим-зв-язків)
 - [Динамічна панель налаштувань](#динамічна-панель-налаштувань-json-schema-driven)
 - [WebSocket: live-логи](#websocket-live-логи)
@@ -389,6 +390,112 @@ wf = Workflow(
 
 ---
 
+## Input Referencing (code-first скорочення)
+
+Коли ти будуєш воркфлоу **в Python-коді** (через `Node(...)` / `Workflow(...)`), масив `edges=[Edge(...)]` швидко стає шумним. Замість цього кожен вузол може оголосити свої вхідні зв'язки прямо у параметрі `inputs`. Workflow-валідатор розгорне їх у канонічний `edges`-масив автоматично — той самий, який бачить фронтенд.
+
+### Формат
+
+```python
+Node(
+    id="...",
+    type="...",
+    config={...},
+    inputs={
+        # 1) Просто id вузла-джерела → source_handle="output" (default).
+        #    Це стандарт для більшості вузлів NexusFlow (custom_code, log, …).
+        "input": "processor_1",
+
+        # 2) Кортеж (source_node_id, source_handle) — явне порт-у-порт.
+        #    Використовуй, коли source-порт не "output" (наприклад,
+        #    manual_trigger.data, read_file.content):
+        "content": ("reader_1", "content"),
+
+        # 3) Список джерел → ФАН-ІН: декілька ребер у той самий target-порт.
+        #    Кожен елемент — або str, або (str, str). Корисно для merge-вузлів
+        #    та condition'ів, що зливають кілька значень у один input:
+        "input": [
+            ("trigger_1", "data"),       # threshold з тригера
+            ("processor_1", "output"),   # count із кастом-коду
+        ],
+
+        # 4) Керуючі (control-flow) ключі для гілок condition'а —
+        #    створюють ребро з source_handle="true"/"false" БЕЗ target_handle:
+        "@on_true":  "condition_1",
+        "@on_false": "condition_1",
+    },
+)
+```
+
+| Ключ                          | Значення                                  | Що згенерується (Edge)                                                  |
+|-------------------------------|-------------------------------------------|-------------------------------------------------------------------------|
+| `"target": "src_id"`          | bare string                               | `Edge(src_id.output → self.target)` — default source_handle = `"output"` |
+| `"target": ("src", "port")`   | tuple                                     | `Edge(src.port → self.target)`                                          |
+| `"target": [v1, v2, …]`       | list of strings/tuples (fan-in)           | окремий Edge для кожного елемента списку, всі з тим самим target-портом |
+| `"@on_true": "cond_id"`       | bare string                               | `Edge(cond_id.true → self)` (без target_handle)                         |
+| `"@on_false": "cond_id"`      | bare string                               | `Edge(cond_id.false → self)`                                            |
+
+> **Важливо.** Дефолтний `source_handle = "output"` — це угода для зручності. Якщо твій вузол-джерело має output під іншою назвою (`manual_trigger.data`, `read_file.content`, `write_file.path`/`bytes_written` тощо) — обов'язково використовуй tuple-форму, інакше двигун шукатиме неіснуючий ключ `"output"` у вихідному словнику й передасть `None`.
+
+### Що відбувається при валідації
+
+`Workflow.model_validate(...)` запускає `_resolve_inputs_to_edges` (`mode="after"`), який:
+
+1. Збирає унікальні ключі вже наявних `edges` як `(from, to, source_handle, target_handle)`.
+2. Проходить по всіх вузлах. Для кожного запису в `inputs`:
+   - якщо ключ — `@on_true`/`@on_false`, створює control-edge від condition'а;
+   - інакше нормалізує значення в **список** атомів (одиничне значення → `[value]`, список → as-is) і для кожного атома створює окремий `Edge` із target_handle = ключ. Атом-string → `source_handle="output"`; атом-tuple → явний source_handle.
+3. **Дедуплікує** проти existing-набору (можеш безпечно поєднувати `inputs` із ручними `edges` — дублікатів не буде).
+4. Запускається ПЕРЕД `_check_graph_integrity`, тож згенеровані ребра теж проходять перевірку: невідомий source_node → `ValidationError` із текстом `"Edge references unknown source node: ..."`.
+
+### Поле `edges` тепер опціональне
+
+Коли всі звʼязки оголошені через `inputs`, `edges=[]` можна взагалі не передавати:
+
+```python
+Workflow(name="...", nodes=[...])  # edges генеруються з inputs
+```
+
+### `inputs` НЕ потрапляє у JSON
+
+Поле `inputs` маркіроване як `Field(default=None, exclude=True)` — це **code-only shortcut**. У збереженому `workflows/<name>.json` живе виключно канонічний `edges`-масив (саме його читає фронтенд через `workflowToFlow`). Це означає: round-trip `Python → save_workflow → load_workflow` дає `Workflow` з повним `edges`, але без `inputs` на вузлах. Ніяких розбіжностей між «джерелом коду» і «тим що бачить UI».
+
+### Повний приклад — `create_complex_workflow.py`
+
+Замість 8 рядків `Edge(...)` маємо лаконічне оголошення прямо у вузлах. Скрипт у корені репозиторію декларує всі 8 ребер через `inputs` + список-fan-in для condition'а + `@on_true`/`@on_false`. Запуск:
+
+```bash
+python create_complex_workflow.py
+# → Сценарій 'Complex_Log_Analyzer' збережено: workflows/Complex_Log_Analyzer.json
+# → Згенеровано ребер: 8
+#   reader_1    -[content/input]-> processor_1
+#   trigger_1   -[data/input]-> condition_1     ← fan-in 1/2
+#   processor_1 -[output/input]-> condition_1   ← fan-in 2/2
+#   processor_1 -[output/input]-> formatter_1
+#   condition_1 -[true/*]-> formatter_1         ← @on_true
+#   formatter_1 -[result/content]-> writer_1
+#   writer_1    -[path/input]-> logger_1
+#   condition_1 -[false/*]-> logger_1           ← @on_false
+```
+
+Назви портів у скрипті СУВОРО збігаються з декораторами `@input_port` / `@output_port` у `app/nodes/*.py`:
+
+| Тип вузла          | input-порти             | output-порти                            |
+|--------------------|-------------------------|-----------------------------------------|
+| `manual_trigger`   | —                       | `data`                                  |
+| `read_file`        | `path`                  | `content`, `size`, `path`               |
+| `write_file`       | `path`, `content`       | `path`, `bytes_written`, `append`       |
+| `condition`        | `input`                 | `true`, `false`, `result`               |
+| `log`              | `input`, `message`      | `output`                                |
+| `custom_code`      | `input`                 | `output`                                |
+| `expression`       | `expression`, `input`   | `result`                                |
+
+Для нестандартних source-портів (manual_trigger, read_file, write_file) обов'язково використовуй tuple-форму у `inputs` — bare-string шорткат завжди генерує `source_handle="output"`.
+
+Покривається тестами `tests/test_schemas.py::test_inputs_*` (11 тестів: str/tuple/list-формати, control-flow keys, дедуплікація list проти explicit-edges, fan-in 2 та 3 джерел, exclude-from-JSON, невалідні значення, фейл при unknown source node, опціональний `edges`).
+
+---
+
 ### Автоматична конвертація типів між портами
 
 Коли значення приходить через port-mapping, рушій (`_route_inputs`) дивиться на `type_hint` цільового вхідного порту (з `@input_port(type_hint="...")`) і порівнює його з фактичним типом значення. Якщо вони не збігаються — **робить найкращу спробу конвертації** (`_try_convert`):
@@ -623,7 +730,7 @@ pytest                                                                # усі �
 pytest --cov=app.core --cov=app.nodes --cov-report=term-missing       # з покриттям
 ```
 
-Поточний стан: **99 passed** (включно з тестами на `is_readonly`-каскад на ребрах, auto-conversion типів між портами, dead-branch cascade на 3+ рівні нащадків та `trigger_rule` AND/OR-семантику).
+Поточний стан: **110 passed** (включно з тестами на `is_readonly`-каскад на ребрах, auto-conversion типів між портами, dead-branch cascade на 3+ рівні нащадків, `trigger_rule` AND/OR-семантику, `inputs`-shorthand для code-first генерації ребер та fan-in через списки джерел).
 
 ### Frontend
 ```bash

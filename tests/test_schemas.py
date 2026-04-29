@@ -145,6 +145,243 @@ def test_node_trigger_rule_rejects_unknown_value():
         )
 
 
+# ---------- inputs shorthand → edges ----------
+
+
+def test_inputs_shorthand_string_defaults_source_handle_to_output():
+    """Bare-string значення → source_handle="output" (DEFAULT_SOURCE_HANDLE).
+    Це стандарт для більшості наших вузлів (custom_code, log, …).
+    """
+    wf = Workflow.model_validate(
+        {
+            "name": "i_str",
+            "nodes": [
+                {"id": "t1", "type": "manual_trigger", "config": {}},
+                {
+                    "id": "l1", "type": "log", "config": {"message": "x"},
+                    "inputs": {"input": "t1"},
+                },
+            ],
+            "edges": [],
+        }
+    )
+    assert len(wf.edges) == 1
+    e = wf.edges[0]
+    assert (e.from_node, e.to_node) == ("t1", "l1")
+    assert e.source_handle == "output"
+    assert e.target_handle == "input"
+
+
+def test_inputs_shorthand_tuple_creates_port_to_port_edge():
+    wf = Workflow.model_validate(
+        {
+            "name": "i_tup",
+            "nodes": [
+                {"id": "t1", "type": "manual_trigger", "config": {}},
+                {
+                    "id": "l1", "type": "log", "config": {"message": "x"},
+                    "inputs": {"input": ("t1", "data")},
+                },
+            ],
+            "edges": [],
+        }
+    )
+    assert len(wf.edges) == 1
+    e = wf.edges[0]
+    assert e.source_handle == "data"
+    assert e.target_handle == "input"
+
+
+def test_inputs_control_flow_keys_create_branch_edges():
+    wf = Workflow.model_validate(
+        {
+            "name": "i_ctrl",
+            "nodes": [
+                {"id": "t1", "type": "manual_trigger", "config": {}},
+                {"id": "c1", "type": "condition",
+                 "config": {"expression": "True"}},
+                {"id": "lt", "type": "log", "config": {"message": "yes"},
+                 "inputs": {"@on_true": "c1"}},
+                {"id": "lf", "type": "log", "config": {"message": "no"},
+                 "inputs": {"@on_false": "c1"}},
+            ],
+            "edges": [{"from": "t1", "to": "c1"}],
+        }
+    )
+    branch_edges = [e for e in wf.edges if e.from_node == "c1"]
+    handles = sorted(e.source_handle for e in branch_edges)
+    assert handles == ["false", "true"]
+    assert all(e.target_handle is None for e in branch_edges)
+
+
+def test_inputs_does_not_duplicate_already_explicit_edges():
+    wf = Workflow.model_validate(
+        {
+            "name": "i_dedup",
+            "nodes": [
+                {"id": "t1", "type": "manual_trigger", "config": {}},
+                {
+                    "id": "l1", "type": "log", "config": {"message": "x"},
+                    "inputs": {"input": ("t1", "data")},
+                },
+            ],
+            # Те саме ребро вказано вручну — Workflow-валідатор НЕ дублює.
+            "edges": [
+                {"from": "t1", "to": "l1",
+                 "source_handle": "data", "target_handle": "input"}
+            ],
+        }
+    )
+    assert len(wf.edges) == 1
+
+
+def test_inputs_field_is_excluded_from_json_dump():
+    """Поле `inputs` — code-only shortcut: воно не повинне потрапляти у
+    канонічний JSON-формат. Фронтенд читає лише `edges`.
+    """
+    wf = Workflow.model_validate(
+        {
+            "name": "i_dump",
+            "nodes": [
+                {"id": "t1", "type": "manual_trigger", "config": {}},
+                {
+                    "id": "l1", "type": "log", "config": {"message": "x"},
+                    "inputs": {"input": "t1"},
+                },
+            ],
+            "edges": [],
+        }
+    )
+    dumped = wf.model_dump_json(by_alias=True)
+    assert '"inputs"' not in dumped
+    # А ось згенероване ребро має бути присутнє.
+    assert '"from":"t1"' in dumped or '"from": "t1"' in dumped
+
+
+def test_inputs_unknown_source_node_fails_integrity_check():
+    with pytest.raises(ValidationError, match="unknown"):
+        Workflow.model_validate(
+            {
+                "name": "i_bad",
+                "nodes": [
+                    {"id": "l1", "type": "log", "config": {"message": "x"},
+                     "inputs": {"input": "ghost_id"}},
+                ],
+                "edges": [],
+            }
+        )
+
+
+def test_inputs_invalid_value_format_raises():
+    with pytest.raises(ValidationError):
+        Workflow.model_validate(
+            {
+                "name": "i_invalid",
+                "nodes": [
+                    {"id": "t1", "type": "manual_trigger", "config": {}},
+                    {"id": "l1", "type": "log", "config": {"message": "x"},
+                     # 3-element tuple — недопустимий формат
+                     "inputs": {"input": ("t1", "a", "b")}},
+                ],
+                "edges": [],
+            }
+        )
+
+
+def test_inputs_list_value_creates_edge_per_source():
+    """fan-in: список джерел в один target_handle → окремий Edge на кожне."""
+    wf = Workflow.model_validate(
+        {
+            "name": "i_list",
+            "nodes": [
+                {"id": "n1", "type": "manual_trigger", "config": {}},
+                {"id": "n2", "type": "manual_trigger", "config": {}},
+                {
+                    "id": "merge", "type": "log", "config": {"message": "x"},
+                    "inputs": {"input": ["n1", ("n2", "out")]},
+                },
+            ],
+            "edges": [],
+        }
+    )
+    edges_into_merge = [e for e in wf.edges if e.to_node == "merge"]
+    assert len(edges_into_merge) == 2
+    # n1 (str shorthand) → source_handle = "output" (DEFAULT_SOURCE_HANDLE)
+    # n2 (tuple)         → source_handle = "out"
+    by_src = {(e.from_node, e.source_handle): e.target_handle for e in edges_into_merge}
+    assert by_src == {
+        ("n1", "output"): "input",
+        ("n2", "out"): "input",
+    }
+
+
+def test_inputs_list_with_three_sources_creates_three_edges():
+    wf = Workflow.model_validate(
+        {
+            "name": "i_list3",
+            "nodes": [
+                {"id": "a", "type": "manual_trigger", "config": {}},
+                {"id": "b", "type": "manual_trigger", "config": {}},
+                {"id": "c", "type": "manual_trigger", "config": {}},
+                {
+                    "id": "fan", "type": "log", "config": {"message": "x"},
+                    "inputs": {
+                        "input": [("a", "data"), ("b", "data"), ("c", "data")]
+                    },
+                },
+            ],
+            "edges": [],
+        }
+    )
+    assert len([e for e in wf.edges if e.to_node == "fan"]) == 3
+
+
+def test_inputs_list_dedups_against_existing_edges():
+    """Якщо одне з джерел у списку вже є як explicit-edge — дублювання
+    НЕ відбувається, але інші джерела зі списку додаються нормально.
+    """
+    wf = Workflow.model_validate(
+        {
+            "name": "i_list_dedup",
+            "nodes": [
+                {"id": "a", "type": "manual_trigger", "config": {}},
+                {"id": "b", "type": "manual_trigger", "config": {}},
+                {
+                    "id": "merge", "type": "log", "config": {"message": "x"},
+                    "inputs": {"input": [("a", "data"), ("b", "data")]},
+                },
+            ],
+            "edges": [
+                {"from": "a", "to": "merge",
+                 "source_handle": "data", "target_handle": "input"}
+            ],
+        }
+    )
+    incoming = [e for e in wf.edges if e.to_node == "merge"]
+    assert len(incoming) == 2  # one pre-existing, one added from list
+    # порядок: спершу explicit, потім додані з inputs (b)
+    assert incoming[0].from_node == "a"
+    assert incoming[1].from_node == "b"
+
+
+def test_workflow_edges_default_to_empty_list_when_using_inputs_only():
+    """Якщо програміст оголошує всі звʼязки через `inputs`, явний
+    `edges=[]` можна не передавати — він тепер опціональний.
+    """
+    wf = Workflow.model_validate(
+        {
+            "name": "no_edges_field",
+            "nodes": [
+                {"id": "t1", "type": "manual_trigger", "config": {}},
+                {"id": "l1", "type": "log", "config": {"message": "x"},
+                 "inputs": {"input": "t1"}},
+            ],
+            # `edges` ключа взагалі немає
+        }
+    )
+    assert len(wf.edges) == 1
+
+
 # ---------- node_configs ----------
 
 @pytest.mark.parametrize(
