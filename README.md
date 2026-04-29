@@ -460,41 +460,6 @@ Workflow(name="...", nodes=[...])  # edges генеруються з inputs
 
 Поле `inputs` маркіроване як `Field(default=None, exclude=True)` — це **code-only shortcut**. У збереженому `workflows/<name>.json` живе виключно канонічний `edges`-масив (саме його читає фронтенд через `workflowToFlow`). Це означає: round-trip `Python → save_workflow → load_workflow` дає `Workflow` з повним `edges`, але без `inputs` на вузлах. Ніяких розбіжностей між «джерелом коду» і «тим що бачить UI».
 
-### Повний приклад — `create_complex_workflow.py`
-
-Замість 8 рядків `Edge(...)` маємо лаконічне оголошення прямо у вузлах. Скрипт у корені репозиторію декларує всі 8 ребер через `inputs` + список-fan-in для condition'а + `@on_true`/`@on_false`. Запуск:
-
-```bash
-python create_complex_workflow.py
-# → Сценарій 'Complex_Log_Analyzer' збережено: workflows/Complex_Log_Analyzer.json
-# → Згенеровано ребер: 8
-#   reader_1    -[content/input]-> processor_1
-#   trigger_1   -[data/input]-> condition_1     ← fan-in 1/2
-#   processor_1 -[output/input]-> condition_1   ← fan-in 2/2
-#   processor_1 -[output/input]-> formatter_1
-#   condition_1 -[true/*]-> formatter_1         ← @on_true
-#   formatter_1 -[result/content]-> writer_1
-#   writer_1    -[path/input]-> logger_1
-#   condition_1 -[false/*]-> logger_1           ← @on_false
-```
-
-Назви портів у скрипті СУВОРО збігаються з декораторами `@input_port` / `@output_port` у `app/nodes/*.py`:
-
-| Тип вузла          | input-порти             | output-порти                            |
-|--------------------|-------------------------|-----------------------------------------|
-| `manual_trigger`   | —                       | `data`                                  |
-| `read_file`        | `path`                  | `content`, `size`, `path`               |
-| `write_file`       | `path`, `content`       | `path`, `bytes_written`, `append`       |
-| `condition`        | `input`                 | `true`, `false`, `result`               |
-| `log`              | `input`, `message`      | `output`                                |
-| `custom_code`      | `input`                 | `output`                                |
-| `expression`       | `expression`, `input`   | `result`                                |
-
-Для нестандартних source-портів (manual_trigger, read_file, write_file) обов'язково використовуй tuple-форму у `inputs` — bare-string шорткат завжди генерує `source_handle="output"`.
-
-Покривається тестами `tests/test_schemas.py::test_inputs_*` (11 тестів: str/tuple/list-формати, control-flow keys, дедуплікація list проти explicit-edges, fan-in 2 та 3 джерел, exclude-from-JSON, невалідні значення, фейл при unknown source node, опціональний `edges`).
-
----
 
 ### Автоматична конвертація типів між портами
 
@@ -827,31 +792,6 @@ class HttpRequestNode(BaseNode):
 ### Крок 5 (опційно): тести
 
 Додай `tests/test_nodes.py::test_http_request_*` за зразком решти.
-
----
-
-## Обмеження MVP і майбутнє
-
-### MVP свідомо НЕ робить
-
-- **Без БД.** `Job` і `Workflow` живуть в RAM (лише `Workflow` персистяться у файли). Після рестарту сервера задачі губляться.
-- **Без черги задач.** Усе через `asyncio.create_task` у тому ж процесі. Не для production-навантаження.
-- **Без автентифікації.** API відкритий.
-- **Без циклів у графі.** Тільки DAG.
-- **Без paralleled-fan-out.** Топ-сорт виконує вузли послідовно, навіть якщо вони незалежні.
-- **Тільки ПК-операції.** Без IoT, AI, Telegram, БД-вузлів.
-
-### Roadmap (далі курсової)
-
-| Напрям | Що зробити |
-|---|---|
-| Персистентність | SQLite/Postgres для `Job`-історії та `Workflow` (замість JSON-файлів) |
-| Автентифікація | API-ключі / OAuth |
-| Паралельність | виконання незалежних вузлів через `asyncio.gather` |
-| Цикли / loop-вузол | окремий `loop`-тип з лімітом ітерацій |
-| Нові вузли | `http_request`, `telegram`, `openai`, `cron_trigger`, `webhook_trigger` |
-| Фронтенд | React Flow / drag-and-drop редактор графа |
-| Розподілене виконання | воркери на Celery/Arq, broker на Redis |
 
 ---
 
