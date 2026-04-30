@@ -1,5 +1,5 @@
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone
 from uuid import uuid4
 
 from app.core.context import ExecutionContext
@@ -30,7 +30,7 @@ class JobManager:
             id=str(uuid4()),
             workflow_name=workflow.name,
             status=JobStatus.PENDING,
-            started_at=datetime.utcnow(),
+            started_at=datetime.now(timezone.utc),
         )
         self._jobs[job.id] = job
         self._tasks[job.id] = asyncio.create_task(self._run(workflow, job))
@@ -51,9 +51,9 @@ class JobManager:
             job.status = JobStatus.FAILED
             job.error = str(exc)
         finally:
-            job.finished_at = datetime.utcnow()
+            job.finished_at = datetime.now(timezone.utc)
             sentinel = LogEntry(
-                timestamp=datetime.utcnow(),
+                timestamp=datetime.now(timezone.utc),
                 node_id=None,
                 level="done",
                 message=f"Job {job.id} finished: {job.status.value}",

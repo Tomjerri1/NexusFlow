@@ -29,7 +29,7 @@ def create_complex_demo():
     trigger = Node(
         id="trigger_1",
         type="manual_trigger",
-        config={"initial_data": {"threshold": 3}},
+        config={"initial_data": {"data": 3}},
     )
 
     # 2. Читач файлу: output-порт "content" (read_file.py).
@@ -56,23 +56,24 @@ def create_complex_demo():
     check_limit = Node(
         id="condition_1",
         type="condition",
-        config={"expression": "input.count > input.threshold"},
+        # СЕКРЕТ ТУТ: додаємо .count (або .errors), бо процесор повертає словник!
+        config={"expression": "nodes.processor_1.output.count > nodes.trigger_1.data"},
         inputs={
+            # Масив забезпечує Fan-in та красиві лінії на сайті
             "input": [
-                ("trigger_1", "data"),       # threshold ← trigger.data
-                ("processor_1", "output"),   # count     ← processor.output
+                ("trigger_1", "data"),
+                ("processor_1", "output"),
             ],
         },
     )
 
-    # 5. Форматер: вираз із input-портом "input" та output "result".
-    #    Тригериться і даними з processor'а, і керуванням @on_true.
-    #    Дефолтний trigger_rule="all_success" — обидва входи мають бути живі.
+    # 5. Форматер
     formatter = Node(
         id="formatter_1",
         type="expression",
         config={
-            "expression": "'УВАГА! Знайдено ' + str(input.count) + ' помилок.'"
+            # Тут теж додаємо .count
+            "expression": "'УВАГА! Знайдено ' + str(nodes.processor_1.output.count) + ' помилок.'"
         },
         inputs={
             "input": ("processor_1", "output"),

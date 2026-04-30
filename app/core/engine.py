@@ -32,6 +32,9 @@ import asyncio
 import logging
 from collections import defaultdict
 from dataclasses import dataclass, field
+from typing import Any
+
+from pydantic import ConfigDict, TypeAdapter, ValidationError
 
 from app.core.context import ExecutionContext
 from app.core.scheduler import topological_sort
@@ -63,74 +66,58 @@ def _is_branching_handle(handle: str | None) -> bool:
     return handle in ("true", "false")
 
 
-_NUMERIC_TYPES = {"int", "float", "number", "integer"}
-_STR_TYPES = {"str", "string"}
-_BOOL_TYPES = {"bool", "boolean"}
-_DICT_TYPES = {"dict", "object"}
-_LIST_TYPES = {"list", "array"}
+# Мапінг рядкових імен портів-типів (як їх пише розробник у
+# `@input_port(type_hint="...")`) у реальні Python-типи. Раніше тут була
+# власна машинерія `_python_kind` + `_matches` + ручний `_try_convert`
+# на 60 рядків — тепер за нас усе робить Pydantic.
+TYPE_MAPPING: dict[str, Any] = {
+    "int": int,
+    "integer": int,
+    "float": float,
+    "number": float,
+    "str": str,
+    "string": str,
+    "bool": bool,
+    "boolean": bool,
+    "dict": dict,
+    "object": dict,
+    "list": list,
+    "array": list,
+    "any": Any,
+    "": Any,
+}
+
+# Lax-конфіг: дозволяє конвертації `int/float → str` («42» → "42"),
+# яких очікують вузли NexusFlow і які раніше робив ручний `str(value)`.
+# Решта lax-перетворень («42»→42, "true"→True, tuple→list тощо)
+# у Pydantic v2 ввімкнена за замовчуванням.
+_LAX_CONFIG = ConfigDict(coerce_numbers_to_str=True)
 
 
-def _python_kind(value) -> str:
-    if isinstance(value, bool):
-        return "bool"
-    if isinstance(value, int):
-        return "int"
-    if isinstance(value, float):
-        return "float"
-    if isinstance(value, str):
-        return "str"
-    if isinstance(value, dict):
-        return "dict"
-    if isinstance(value, list):
-        return "list"
-    return type(value).__name__
+def _try_convert(value: Any, expected: str) -> Any:
+    """Спробувати конвертувати `value` у тип, що відповідає рядку `expected`.
 
+    Логіка:
+      • беремо реальний Python-тип з `TYPE_MAPPING`,
+      • для `Any` (або невідомого типу) — повертаємо значення без змін,
+      • інакше створюємо `TypeAdapter(target, config=_LAX_CONFIG)` і викликаємо
+        `validate_python(value)` — це і є «офіційна» Pydantic-ова конвертація.
 
-def _matches(expected: str, actual_kind: str) -> bool:
-    expected = expected.lower()
-    if expected in ("any", ""):
-        return True
-    if actual_kind == "bool" and expected in _NUMERIC_TYPES:
-        return False
-    groups = (_NUMERIC_TYPES, _STR_TYPES, _BOOL_TYPES, _DICT_TYPES, _LIST_TYPES)
-    for group in groups:
-        if expected in group:
-            return actual_kind in group or actual_kind == expected
-    return expected == actual_kind
-
-
-def _try_convert(value, expected: str):
-    expected = expected.lower()
-    if expected in _STR_TYPES:
-        return str(value)
-    if expected == "int" or expected == "integer":
-        if isinstance(value, str):
-            return int(value.strip())
-        return int(value)
-    if expected in ("float", "number"):
-        if isinstance(value, str):
-            return float(value.strip())
-        return float(value)
-    if expected in _BOOL_TYPES:
-        if isinstance(value, str):
-            v = value.strip().lower()
-            if v in ("true", "1", "yes", "on"):
-                return True
-            if v in ("false", "0", "no", "off", ""):
-                return False
-            raise ValueError(f"cannot parse {value!r} as bool")
-        return bool(value)
-    if expected in _DICT_TYPES:
-        if isinstance(value, dict):
-            return value
-        raise TypeError(f"cannot convert {_python_kind(value)} to dict")
-    if expected in _LIST_TYPES:
-        if isinstance(value, list):
-            return value
-        if isinstance(value, tuple):
-            return list(value)
-        raise TypeError(f"cannot convert {_python_kind(value)} to list")
-    raise TypeError(f"unknown target type {expected!r}")
+    Якщо Pydantic відкидає значення — піднімаємо `TypeError`, щоб блок
+    `except (ValueError, TypeError)` у `_route_inputs` поводився ідентично
+    до старої поведінки: логувати warning і пропускати оригінальне значення.
+    """
+    target = TYPE_MAPPING.get(expected.lower())
+    if target is None or target is Any:
+        return value
+    try:
+        return TypeAdapter(target, config=_LAX_CONFIG).validate_python(value)
+    except ValidationError as exc:
+        # Перший запис у `errors()` — найрелевантніше повідомлення.
+        msg = exc.errors()[0]["msg"] if exc.errors() else str(exc)
+        raise TypeError(
+            f"cannot convert {type(value).__name__} to {expected!r}: {msg}"
+        ) from exc
 
 
 def _expected_port_type(node_type: str, port_name: str) -> str | None:
@@ -464,20 +451,21 @@ class WorkflowEngine:
 
             expected = _expected_port_type(node.type, edge.target_handle)
             if expected and value is not None:
-                actual = _python_kind(value)
-                if not _matches(expected, actual):
-                    try:
-                        value = _try_convert(value, expected)
-                    except (ValueError, TypeError) as exc:
-                        await context.log(
-                            node.id,
-                            (
-                                f"Type mismatch on port '{edge.target_handle}': "
-                                f"expected {expected}, got {actual} "
-                                f"(auto-convert failed: {exc}) — passing original value"
-                            ),
-                            level="warning",
-                        )
+                # `_try_convert` тепер сам — no-op для збігу типів, бо
+                # `TypeAdapter.validate_python` без модифікацій повертає
+                # коректне значення. Тому окрема `_matches`-перевірка зайва.
+                try:
+                    value = _try_convert(value, expected)
+                except (ValueError, TypeError) as exc:
+                    await context.log(
+                        node.id,
+                        (
+                            f"Type mismatch on port '{edge.target_handle}': "
+                            f"expected {expected}, got {type(value).__name__} "
+                            f"(auto-convert failed: {exc}) — passing original value"
+                        ),
+                        level="warning",
+                    )
 
             if edge.target_handle in mapped:
                 if not isinstance(mapped[edge.target_handle], list):

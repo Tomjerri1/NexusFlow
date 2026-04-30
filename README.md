@@ -156,6 +156,10 @@ finally:
 
 Дефолт `MAX_WORKERS=6` — компроміс між паралелізмом для I/O-важких графів і захистом від OOM на гігантських воркфлоу. Для тюнінгу під своє навантаження передайте інший ліміт у конструктор: `WorkflowEngine(max_workers=16)`. У продуктивному `JobManager` лишився дефолт.
 
+### Timezone-aware мітки часу
+
+Усі мітки часу (`Job.started_at`, `Job.finished_at`, `LogEntry.timestamp`) формуємо як `datetime.now(timezone.utc)`. У Python 3.12+ `datetime.utcnow()` — deprecated, бо повертав naive-datetime, який нечутний до часового поясу. Нова форма явно `tzinfo=UTC`: однозначна серіалізація у JSON / WebSocket-стрім та коректне порівняння з `datetime`-ами, що приходять зовні.
+
 ---
 
 ## Frontend (React Flow редактор)
@@ -597,20 +601,47 @@ Workflow(name="...", nodes=[...])  # edges генеруються з inputs
 Поле `inputs` маркіроване як `Field(default=None, exclude=True)` — це **code-only shortcut**. У збереженому `workflows/<name>.json` живе виключно канонічний `edges`-масив (саме його читає фронтенд через `workflowToFlow`). Це означає: round-trip `Python → save_workflow → load_workflow` дає `Workflow` з повним `edges`, але без `inputs` на вузлах. Ніяких розбіжностей між «джерелом коду» і «тим що бачить UI».
 
 
-### Автоматична конвертація типів між портами
+### Автоматична конвертація типів між портами (Pydantic-driven)
 
-Коли значення приходить через port-mapping, рушій (`_route_inputs`) дивиться на `type_hint` цільового вхідного порту (з `@input_port(type_hint="...")`) і порівнює його з фактичним типом значення. Якщо вони не збігаються — **робить найкращу спробу конвертації** (`_try_convert`):
+Коли значення приходить через port-mapping, рушій (`_route_inputs`) дивиться на `type_hint` цільового вхідного порту (з `@input_port(type_hint="...")`) і **просто пропускає значення через Pydantic-валідатор**. Замість ручних таблиць типів і самописної конвертації — мінімалістичний `TYPE_MAPPING` + один `TypeAdapter`:
 
-- `int` ↔ `str` (через `int(s.strip())` / `str(v)`),
-- `float` / `number` ← `str` чи `int`,
-- `bool` ← рядкові `"true"|"false"|"1"|"0"|"yes"|"no"|"on"|"off"`,
-- `dict` / `list` — пропускає тільки якщо вже відповідного типу (без хитрої «конвертації»).
+```python
+TYPE_MAPPING = {
+    "int": int, "integer": int,
+    "float": float, "number": float,
+    "str": str, "string": str,
+    "bool": bool, "boolean": bool,
+    "dict": dict, "object": dict,
+    "list": list, "array": list,
+    "any": Any, "": Any,
+}
 
-Якщо конвертація провалилася — у `context.log` з'являється `warning` (з рівнем `"warning"`):
+_LAX_CONFIG = ConfigDict(coerce_numbers_to_str=True)
+
+def _try_convert(value, expected: str):
+    target = TYPE_MAPPING.get(expected.lower())
+    if target is None or target is Any:
+        return value
+    try:
+        return TypeAdapter(target, config=_LAX_CONFIG).validate_python(value)
+    except ValidationError as exc:
+        raise TypeError(f"cannot convert ... : {exc.errors()[0]['msg']}") from exc
+```
+
+Що це означає на практиці — Pydantic у lax-режимі автоматично робить:
+
+- `"42" → 42`, `"3.14" → 3.14`, `"true"/"false" → bool`,
+- `int/float → str` (через `coerce_numbers_to_str=True`),
+- `tuple → list`, валідні `dict`-літерали,
+- усе несумісне (наприклад, `dict` у `path: str`) — `ValidationError`, який ми перевертаємо в `TypeError`.
+
+Якщо конвертація провалилася — у `context.log` з'являється `warning`:
 ```
 Type mismatch on port 'path': expected str, got dict (auto-convert failed: …) — passing original value
 ```
 **Виконання НЕ зупиняється** — оригінальне значення проходить як є. Це частина філософії «fail loud, але не валити job через дрібний type-mismatch». Якщо тип `any` (за замовчуванням) — перевірок взагалі немає.
+
+> Раніше тут жили константи `_NUMERIC_TYPES`/`_STR_TYPES`/… і функції `_python_kind` + `_matches` + ручний 60-рядковий `_try_convert`. Тепер це 15 рядків + бібліотека, яку ми й так використовуємо. Менше коду — менше місця для багів.
 
 ### `GET /api/nodes/schema`
 

@@ -1,6 +1,6 @@
 import asyncio
 import re
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Any, Protocol
 
 from app.schemas.job import LogEntry, LogLevel
@@ -54,7 +54,7 @@ class ExecutionContext:
         level: LogLevel = "info",
     ) -> None:
         entry = LogEntry(
-            timestamp=datetime.utcnow(),
+            timestamp=datetime.now(timezone.utc),
             node_id=node_id,
             level=level,
             message=message,
