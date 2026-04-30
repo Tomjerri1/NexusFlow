@@ -34,6 +34,13 @@ class JobManager:
         )
         self._jobs[job.id] = job
         self._tasks[job.id] = asyncio.create_task(self._run(workflow, job))
+        # НОВИЙ БЛОК: Механізм TTL (Time To Live) за кількістю
+        MAX_JOBS = 500
+        if len(self._jobs) > MAX_JOBS:
+            # Видаляємо найстаріший ключ (у Python 3.7+ словники зберігають порядок вставки)
+            oldest_key = next(iter(self._jobs))
+            self._jobs.pop(oldest_key, None)
+
         return job
 
     async def _run(self, workflow: Workflow, job: Job) -> None:
@@ -61,6 +68,7 @@ class JobManager:
             await self.broker.publish(job.id, sentinel)
             await collector
             self.broker.unsubscribe(job.id, log_queue)
+            self._tasks.pop(job.id, None)
 
     @staticmethod
     async def _collect_logs(job: Job, queue: asyncio.Queue[LogEntry]) -> None:
