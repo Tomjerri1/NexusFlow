@@ -1,4 +1,4 @@
-// Єдине джерело правди про 5 типів вузлів MVP — синхронізовано з NODE_REGISTRY бекенду.
+// Єдине джерело правди про типи вузлів — синхронізовано з NODE_REGISTRY бекенду.
 
 export const NODE_TYPES = [
   "manual_trigger",
@@ -8,6 +8,7 @@ export const NODE_TYPES = [
   "log",
   "custom_code",
   "expression",
+  "note",
 ];
 
 // Дефолтні config'и при створенні вузла з палітри.
@@ -19,6 +20,17 @@ export const DEFAULT_CONFIG = {
   log: { message: "Hello, {input.user}!", level: "info" },
   custom_code: { script_name: "my_script", entry_point: "main", params: {} },
   expression: { expression: "input.a + input.b" },
+  // Note — суто візуальний стікер (рушій його ігнорує).
+  note: {
+    title: "Примітка",
+    html_content: "",
+    width: 240,
+    height: 160,
+    background_color: "#fef3c7",
+    text_color: "#1f2937",
+    font_family: "system-ui, sans-serif",
+    font_size: 14,
+  },
 };
 
 // Колір-акцент для заголовка вузла на канвасі.
@@ -30,6 +42,7 @@ export const TYPE_BG = {
   log: "bg-slate-500",
   custom_code: "bg-fuchsia-600",
   expression: "bg-teal-600",
+  note: "bg-amber-300 text-slate-900",
 };
 
 // Скорочений підпис під заголовком вузла (рендериться у CustomNode).
@@ -51,6 +64,8 @@ export function summarize(type, config) {
       return `${config?.script_name || "—"}.${config?.entry_point || "main"}()`;
     case "expression":
       return config?.expression || "—";
+    case "note":
+      return "";
     default:
       return "";
   }

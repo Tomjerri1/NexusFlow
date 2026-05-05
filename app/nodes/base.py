@@ -14,9 +14,7 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# ---------------------------------------------------------------------------
 # Декларативні метадані: порти + UI-info
-# ---------------------------------------------------------------------------
 
 @dataclass(frozen=True)
 class PortSpec:
@@ -159,9 +157,7 @@ def static_connection(source_port: str, target_node: str, target_port: str):
     return decorator
 
 
-# ---------------------------------------------------------------------------
 # Базовий клас
-# ---------------------------------------------------------------------------
 
 class BaseNode(ABC):
     """Базовий клас для всіх вузлів workflow.
@@ -180,7 +176,8 @@ class BaseNode(ABC):
     type_name: ClassVar[str]
     config_model: ClassVar[type[BaseModel]]
 
-    # Декоратори заповнюють ці атрибути на конкретному підкласі.
+    is_visual_only: ClassVar[bool] = False
+
     __inputs__: ClassVar[list[PortSpec]] = []
     __outputs__: ClassVar[list[PortSpec]] = []
     __static_connections__: ClassVar[list[StaticConnection]] = []
@@ -227,6 +224,7 @@ class BaseNode(ABC):
             "outputs": [p.to_dict() for p in outputs],
             "static_connections": [c.to_dict() for c in statics],
             "config_schema": config_schema,
+            "is_visual_only": bool(cls.is_visual_only),
         }
 
 

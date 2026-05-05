@@ -10,13 +10,14 @@ NodeType = Literal[
     "log",
     "custom_code",
     "expression",
+    "note",
 ]
 
 
-# Правила активації вузла на основі стану вхідних ребер.
-# `all_success` — fire лише якщо ВСІ вхідні ребра живі (AND).
-# `one_success` — fire якщо ХОЧА Б ОДНЕ вхідне ребро живе (OR).
-# Стартові вузли (без inbound) активуються завжди.
+# Node activation rules based on the state of the incoming edges.
+# `all_success` — fire only if ALL incoming edges are alive (AND).
+# `one_success` — fire if ANY ONE incoming edge is alive (OR).
+# Start nodes (without inbound) are always activated.
 TriggerRule = Literal["all_success", "one_success"]
 
 
@@ -39,32 +40,22 @@ class Edge(BaseModel):
     is_readonly: bool = False
 
 
-# Спеціальні ключі для оголошення керуючих (control-flow) входів через
-# скорочений запис `Node.inputs`. Не валідуються як target_handle —
-# Workflow-валідатор розпізнає їх і генерує ребра від `condition.true`/
-# `condition.false` без `target_handle`.
 CONTROL_INPUT_KEYS = {
     "@on_true": "true",
     "@on_false": "false",
 }
 
 
-# Source-handle, який використовується, коли програміст пише лише id вузла
-# (`inputs={"port": "trigger_1"}`) без явного source-порту. Більшість
-# вузлів NexusFlow має output-порт із саме таким іменем (`custom_code`,
-# `log`); для нестандартних випадків (`manual_trigger.data`,
-# `read_file.content`) використовуйте tuple-форму.
+# Source-handle, used when the programmer writes only the node id
+# (`inputs={"port": "trigger_1"}`) without an explicit source-port. Most
+# NexusFlow nodes have an output-port with exactly this name (`custom_code`,
+# `log`); for non-standard cases (`manual_trigger.data`,
+# `read_file.content`) use the tuple-form.
 DEFAULT_SOURCE_HANDLE = "output"
 
 
-# Один елемент значення у `Node.inputs`: або просто id вузла-джерела,
-# або кортеж `(source_node_id, source_handle)`. У JSON tuple
-# серіалізується як список довжиною 2.
 NodeInputAtom = str | tuple[str, str]
 
-
-# Повне значення у `Node.inputs[<target_port>]`: одне джерело АБО список
-# джерел (fan-in: декілька ребер у той самий target_handle).
 NodeInputValue = NodeInputAtom | list[NodeInputAtom]
 
 
@@ -72,24 +63,10 @@ class Node(BaseModel):
     id: str
     type: NodeType
     config: dict = Field(default_factory=dict)
-    # Системний (не-конфіг) атрибут вузла: визначає, як двигун розглядає
-    # вхідні ребра. За замовчуванням — `all_success` (AND-семантика):
-    # вузол виконається, лише якщо ВСІ вхідні ребра живі. Перемикайте на
-    # `one_success` для merge-вузлів, які мають спрацьовувати, як тільки
-    # хоч одна гілка живе (OR-семантика).
+
     trigger_rule: TriggerRule = "all_success"
 
-    # Code-first скорочений запис підключень. Ключ — `target_handle`
-    # (порт-приймач у цього вузла), значення — джерело АБО список джерел:
-    #   • str  — id вузла-джерела (source_handle = "output" за замовч.);
-    #   • (source_node_id, source_handle) — порт-у-порт;
-    #   • list[...] — fan-in: кілька ребер у той самий target_handle
-    #     (наприклад, condition зливає threshold + count в один "input").
-    # Спеціальні ключі `@on_true`/`@on_false` створюють керуючі ребра
-    # від condition'а (source_handle="true"/"false", без target_handle).
-    # Поле `exclude=True`: не серіалізується у JSON — у файлі живе лише
-    # canonical-список `edges`, який бачить фронтенд. Workflow-валідатор
-    # розгортає `inputs` у `edges` під час model_validate.
+
     inputs: dict[str, NodeInputValue] | None = Field(default=None, exclude=True)
 
 
@@ -108,24 +85,24 @@ class Workflow(BaseModel):
 
     @model_validator(mode="after")
     def _resolve_inputs_to_edges(self) -> "Workflow":
-        """Розгортає `Node.inputs`-скорочення у явні `Edge`-обʼєкти.
+        """Expands `Node.inputs`-shortcuts into explicit `Edge`-objects.
 
-        Запускається ПЕРЕД `_check_graph_integrity`, тож згенеровані ребра
-        також проходять перевірку цілісності графа (referenced nodes мають
-        існувати). Уже наявні explicit-ребра не дублюються — порівняння
-        йде за ключем `(from, to, source_handle, target_handle)`.
+        Runs BEFORE `_check_graph_integrity`, so generated edges
+        also pass the graph integrity check (referenced nodes must
+        exist). Existing explicit edges are not duplicated — comparison
+        is by key `(from, to, source_handle, target_handle)`.
 
-        Підтримувані формати значень у `inputs`:
-          • `target: "src_id"` → Edge(src_id.output → self.target);
-          • `target: ("src_id", "port")` → Edge(src_id.port → self.target);
-          • `target: [src1, src2, ...]` → fan-in: окремий Edge для кожного
-            джерела зі списку, всі з тим самим target_handle. Кожен елемент
-            списку — або str, або (str, str).
-          • `"@on_true": "cond_id"` → керуюче ребро `cond_id.true → self`
-            (без target_handle); `"@on_false"` — аналогічно для false-гілки.
+        Supported value formats in `inputs`:
+        • `target: "src_id"` → Edge(src_id.output → self.target);
+        • `target: ("src_id", "port")` → Edge(src_id.port → self.target);
+        • `target: [src1, src2, ...]` → fan-in: separate Edge for each
+        source in the list, all with the same target_handle. Each element
+        of the list is either str or (str, str).
+        • `"@on_true": "cond_id"` → control edge `cond_id.true → self`
+        (without target_handle); `"@on_false"` — similarly for false-branch.
 
-        Якщо джерело вказано як просто id вузла (str) — `source_handle`
-        автоматично виставляється у `DEFAULT_SOURCE_HANDLE` ("output").
+        If the source is specified as just a node id (str) — `source_handle`
+        is automatically set to `DEFAULT_SOURCE_HANDLE` ("output").
         """
         existing: set[tuple[str, str, str | None, str | None]] = {
             (e.from_node, e.to_node, e.source_handle, e.target_handle)
@@ -137,8 +114,8 @@ class Workflow(BaseModel):
             if not node.inputs:
                 continue
             for key, value in node.inputs.items():
-                # Контрольні (керуючі) входи: значення — лише id вузла,
-                # списки тут не підтримуються, бо умова має одне джерело.
+                # Control inputs: value is only node id,
+                # lists are not supported here because the condition has a single source.
                 if key in CONTROL_INPUT_KEYS:
                     if not isinstance(value, str):
                         raise ValueError(
@@ -155,7 +132,7 @@ class Workflow(BaseModel):
                     )
                     continue
 
-                # Звичайні дані-входи: атомарне значення або список атомів.
+                # Common input data: atomic value or list of atoms.
                 atoms = value if isinstance(value, list) else [value]
                 for atom in atoms:
                     from_node, source_handle = self._parse_input_atom(
@@ -227,11 +204,11 @@ class Workflow(BaseModel):
             if edge.to_node not in node_id_set:
                 raise ValueError(f"Edge references unknown target node: {edge.to_node!r}")
 
-        # Перевірка ациклічності — гарантує DAG ще до запуску job'у.
-        # Імпорт лінивий: `app.core.scheduler` сам імпортує `Edge`/`Node`
-        # із цього ж модуля, тож top-level import дав би циркулярну
-        # залежність на час завантаження модуля. Лінива форма безпечна,
-        # бо валідатор викликається лише під час `model_validate`.
+        # Acyclicity check — guaranteed by DAG before the job starts.
+        # Lazy import: `app.core.scheduler` itself imports `Edge`/`Node`
+        # from the same module, so top-level import would give a circular
+        # dependency at module load time. Lazy form is safe,
+        # because the validator is called only during `model_validate`.
         from app.core.scheduler import CycleDetectedError, topological_sort
 
         try:

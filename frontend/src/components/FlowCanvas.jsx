@@ -12,6 +12,7 @@ import { useTranslation } from "../i18n.js";
 import { useNodeSchemas, hasReadonlyConnections } from "../nodeSchema.js";
 import { DEFAULT_CONFIG } from "../nodeTypes.js";
 import CustomNode from "./CustomNode.jsx";
+import NoteNode from "./NoteNode.jsx";
 
 let idCounter = 1;
 function makeId(type) {
@@ -33,7 +34,12 @@ export default function FlowCanvas({
   const { screenToFlowPosition } = useReactFlow();
   const { schemas } = useNodeSchemas();
 
-  const nodeTypes = useMemo(() => ({ nexus: CustomNode }), []);
+  // `nexus` — універсальний логічний вузол, `note` — суто візуальний стікер.
+  // Бекенд відрізняє їх через прапорець `is_visual_only` у схемі.
+  const nodeTypes = useMemo(
+    () => ({ nexus: CustomNode, note: NoteNode }),
+    []
+  );
 
   // Воркфлоу повністю readonly: або встановлено явний прапорець на самому
   // воркфлоу, або є хоча б один вузол з декларативним static-зв'язком.
@@ -94,15 +100,23 @@ export default function FlowCanvas({
         y: event.clientY,
       });
       const id = makeId(type);
+      // Візуальний стікер `note` рендериться окремим React Flow type'ом
+      // (без хедера/портів). Усі решта — універсальний `nexus` вузол.
+      const reactFlowType = type === "note" ? "note" : "nexus";
       const newNode = {
         id,
-        type: "nexus",
+        type: reactFlowType,
         position,
         data: {
           type,
           config: structuredClone(DEFAULT_CONFIG[type]),
           trigger_rule: "all_success",
         },
+        // Для note виставляємо стартовий розмір на рівні React Flow node
+        // (style.width/height). NoteNode тепер тягнеться через w-full/h-full,
+        // тож саме React Flow контейнер диктує його bbox — і NodeResizer
+        // оновлює ці розміри live під час драгу куточка.
+        ...(type === "note" ? { style: { width: 240, height: 160 } } : {}),
       };
       setNodes((ns) => ns.concat(newNode));
     },

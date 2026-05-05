@@ -34,10 +34,10 @@ class JobManager:
         )
         self._jobs[job.id] = job
         self._tasks[job.id] = asyncio.create_task(self._run(workflow, job))
-        # НОВИЙ БЛОК: Механізм TTL (Time To Live) за кількістю
+        # Механізм TTL (Time To Live) за кількістю
         MAX_JOBS = 500
         if len(self._jobs) > MAX_JOBS:
-            # Видаляємо найстаріший ключ (у Python 3.7+ словники зберігають порядок вставки)
+            # Видаляємо найстаріший ключ
             oldest_key = next(iter(self._jobs))
             self._jobs.pop(oldest_key, None)
 

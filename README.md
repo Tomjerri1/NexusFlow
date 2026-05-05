@@ -15,6 +15,7 @@ JSON описує граф (вузли + ребра) → рушій будує �
 - [Async Ready Pool — паралельний двигун](#async-ready-pool--паралельний-двигун)
 - [Frontend (React Flow редактор)](#frontend-react-flow-редактор)
 - [Збереження та завантаження сценаріїв](#збереження-та-завантаження-сценаріїв)
+- [Візуальний вузол `note` (Примітка-стікер)](#візуальний-вузол-note-приміткастікер)
 - [Гібридна модель декларативного мапінгу](#гібридна-модель-декларативного-мапінгу)
 - [Автоматична конвертація типів між портами](#автоматична-конвертація-типів-між-портами)
 - [Перевірка ациклічності на етапі валідації](#перевірка-ациклічності-на-етапі-валідації)
@@ -164,7 +165,7 @@ finally:
 
 ## Frontend (React Flow редактор)
 
-Стек: **Vite 5 + React 18 + Tailwind 3 + `@xyflow/react`**, без TypeScript і без зовнішніх i18n-бібліотек.
+Стек: **Vite 5 + React 18 + Tailwind 3 + `@xyflow/react` + `@tiptap/react`** (для візуальної ноти-стікера, див. нижче), без TypeScript і без зовнішніх i18n-бібліотек.
 
 ### Інтерфейс
 
@@ -303,6 +304,84 @@ python create_math_workflow.py
 1. Відкрий `http://localhost:5173`.
 2. У палітрі ліворуч → клац на `Code_First_Math` → граф з'являється на канвасі.
 3. Зміни щось → введи нову назву (наприклад `MyVisualFlow`) → натисни **Save** → у списку зліва з'являється новий запис.
+
+---
+
+## Візуальний вузол `note` (Примітка-стікер)
+
+Вузол `note` — це **суто візуальний стікер для документування графа**. Він додає на канвас post-it-подібний прямокутник з форматованим текстом і **не бере участі у виконанні**: рушій повністю його ігнорує.
+
+### Принципи
+
+- `is_visual_only = True` на класі `NoteNode` (`app/nodes/note_node.py`). Цей прапорець є частиною контракту `BaseNode` і потрапляє у JSON-маніфест `/api/nodes/schema`.
+- **Жодних портів.** На канвасі рендериться без хедера й без `Handle`-точок — на нього нічого не можна підключити.
+- **Двигун відфільтровує `note` ЩЕ ДО `topological_sort`** і до побудови `_RunState` — у `WorkflowEngine.run()` ми викидаємо вузли з `is_visual_only=True` разом із усіма інбаунд/аутбаунд-ребрами, що їх торкаються. Тому такі вузли не потрапляють у `nodes_by_id`, чергу `queue` і не впливають на `pending_count`. У логах від них не залишається жодного сліду.
+- Покрито двома спеціальними тестами в `tests/test_engine.py`: `test_note_nodes_are_filtered_before_execution` (жодного логу про note + сусідні вузли працюють як завжди) і `test_note_node_with_dangling_edges_is_dropped` (фантомні ребра до note теж викидаються рушієм).
+
+### Pydantic-конфіг
+
+`app/schemas/node_configs.py`:
+
+```python
+class NoteConfig(BaseModel):
+    title: str = "Примітка"
+    html_content: str = ""
+    width: float = 240
+    height: float = 160
+    background_color: str = "#fef3c7"
+    text_color: str = "#1f2937"
+    font_family: str = "system-ui, sans-serif"
+    font_size: int = 14
+```
+
+`width/height` зберігаються прямо у `data.config` стікера — щоб новий розмір зберігся у JSON-сценарію після ресайзу. `title` — короткий заголовок стікера, який рендериться у драг-смужці хедера на канвасі (див. нижче).
+
+### Frontend (`NoteNode.jsx`) — TipTap edition
+
+- **Редактор — TipTap (ProseMirror).** Старий `contenteditable + document.execCommand` повністю прибрано: браузерний execCommand губив Selection при кліку на тулбар, плодив застарілі `<font>`-теги і не давав уніфікованої моделі «активних марок» для синхронізації UI. Натомість використовується [`@tiptap/react`](https://tiptap.dev/) із набором офіційних розширень: **StarterKit** (Bold/Italic/Strike/parags/lists/history), **Underline**, **TextAlign**, **TextStyle**, **FontFamily**, **Color**, плюс наш кастомний **FontSize** (`frontend/src/components/FontSize.js`) — TipTap не має штатного для розміру шрифту, тож ми додаємо `fontSize`-атрибут до `textStyle`-марки, що рендериться у `<span style="font-size: Xpx">`.
+- **Без «стрибків курсора»** і без зриву виділення кліком на тулбар: усі форматувальні дії — це `editor.chain().focus().toggleBold().run()` тощо. `chain().focus()` сам відновлює минулу селекцію, тож B/I/U/S, font, color коректно застосовуються незалежно від того, де зараз DOM-фокус.
+- **Bridge `noteEditorBridge.js` між NoteNode та ConfigPanel.** Це окремий модуль із простим `Map<nodeId, Editor> + Set<listener>` і React-хуком `useNoteEditor(nodeId)`. NoteNode у `useEffect` робить `registerNoteEditor(id, editor)` після створення TipTap-екземпляра й `unregisterNoteEditor(id)` у cleanup'і. ConfigPanel.NoteToolbar читає editor через `useNoteEditor(node.id)` — хук додатково підписується на TipTap-події `transaction|selectionUpdate|focus|blur` і ре-рендерить тулбар, щоб `editor.isActive('bold')` у `className` та `editor.getAttributes('textStyle').fontSize` у `<select>` оновлювалися ОДРАЗУ при русі каретки чи зміні марок.
+- **Синк DOM → React Flow state**: тільки на `onBlur` редактора. На кожен символ ми НЕ оновлюємо `data.config.html_content` (це бомбардувало б ReactFlow.setNodes). Зовнішнє оновлення `html_content` (наприклад, завантажили інший воркфлоу) перезаписує контент через `editor.commands.setContent(...)` лише коли редактор НЕ у фокусі — інакше зруйнувало б введення.
+- **Хедер-смужка зверху — драг-зона.** На неї виводиться `config.title` (напівжирним, ледь меншим шрифтом). Хедер НЕ має класу `nodrag`, тому саме за нього React Flow рухає вузол по канвасу. Принципово важливо: інлайн-style хедера ЖОРСТКО прибиває системний шрифт і фіксований розмір 12px — інакше зміна `font_family`/`font_size` усередині редактора повзла б на заголовок, і у графі з'являлися б дивно великі курсивні шапки.
+- **`nodrag` + `nopan`** на корені ProseMirror (передаємо через `editorProps.attributes.class`) — інакше React Flow перехоплював би drag миші замість виділення тексту.
+- **Layout — `flex flex-col` + `w-full h-full`.** Внутрішній контейнер не задає власних `width/height` у `style` — він тягнеться за React Flow node-контейнером, розмір якого живе в `style.width/height` самого React Flow вузла. `<NodeResizer />` оновлює ці розміри **live** під час драгу куточка, а не тільки на `onResizeEnd`. Стартовий розмір (`240×160`) виставляє `FlowCanvas.onDrop` через `style: { width: 240, height: 160 }` на новоствореному вузлі; на `onResizeEnd` ми додатково синкаємо нові значення у `data.config.width/height`, щоб вони збереглись у JSON. EditorContent додатково отримує `flex-1 min-h-0` — без `min-h-0` flex-child не дав би внутрішньому `overflow-auto` спрацювати.
+- **Безпека**: TipTap парсить вхідний HTML через свою ProseMirror-схему й автоматично відкидає теги/атрибути, яких немає у завантажених розширеннях. Тобто `<script>`, `<iframe>`, `onerror=` тощо вирізаються самим парсером — окремий DOMPurify більше не потрібен. Ліміт довжини тексту — **10 000 символів**; на blur, якщо редактор перевищує ліміт, ми просто не зберігаємо нову версію в config (контент у редакторі лишається, але JSON не «брудниться»).
+
+### Frontend (`ConfigPanel.jsx`) — Toolbar bypass
+
+`ConfigPanel` зазвичай рендерить форму **динамічно за JSON-схемою** з бекенду. Для `note` це не потрібно — користувач має бачити тулбар, а не два поля «html_content (string)» і «width (number)». Тому на початку панелі стоїть перевірка:
+
+```jsx
+if (type === "note") {
+  return <NoteToolbar ... />;  // повністю кастомний UI
+}
+```
+
+Тулбар має сім блоків (зверху вниз):
+
+1. **Заголовок (Title)** — звичайний `<input type="text">`. Записує `config.title` через `patchConfig(...)` — змінений рядок одразу зʼявляється у драг-смужці хедера на канвасі.
+2. **B / I / U / S** — `editor.chain().focus().toggleBold/Italic/Underline/Strike().run()`. Кожна кнопка ПІДСВІЧУЄТЬСЯ амбер-tint'ом, коли `editor.isActive("bold")` (відповідно — italic/underline/strike) у поточній позиції каретки/виділення. Це «дзеркало стану», якого execCommand-реалізація не давала.
+3. **Вирівнювання тексту** (L / C / R / J) — `editor.chain().focus().setTextAlign("left"|"center"|"right"|"justify").run()`. Активне вирівнювання так само підсвічується (`isActive({ textAlign: "..." })`).
+4. **Шрифт виділеного тексту** — `<select>`, який запускає `editor.chain().focus().setFontFamily(value).run()`. **Поточне значення select'а читається з `editor.getAttributes("textStyle").fontFamily`** — тобто показує шрифт того фрагмента, де стоїть курсор. Якщо нічого «активного» немає (текст без марки) — fallback на дефолтний `config.font_family`. Шрифти, які не входять у curated-list, лишаються видимими у select'і як окремий пункт.
+5. **Розмір шрифту виділеного тексту** — `<select>` із пунктами 8 / 10 / 12 / 14 / 16 / 18 / 22 / 28 / 36 / 48 / 72. Запускає `editor.chain().focus().setFontSize("Xpx").run()` (наш кастомний `setFontSize` з `FontSize.js`). Поточне значення select'а — `parseFloat(editor.getAttributes("textStyle").fontSize)` із fallback'ом на `config.font_size`. Як і шрифт, нестандартні розміри показуються у select'і як «зайвий» пункт.
+6. **Колір виділеного тексту** — `<input type="color">`, що викликає `editor.chain().focus().setColor(hex).run()` (TipTap Color, теж атрибут textStyle). Значення picker'а синхронізоване з `editor.getAttributes("textStyle").color`.
+7. **Популярні стилі / Глобальний дефолтний колір тексту / Колір фону стікера** — це ГЛОБАЛЬНІ налаштування контейнера через `patchConfig(...)`. `text_color` тепер слугує дефолтним кольором для фрагментів БЕЗ Color-марки (TipTap-марка перебиває). Пресети одним кліком пишуть і `background_color`, і `text_color`. Активний пресет підсвічується амбер-обвідкою.
+
+Усі кнопки/селекти мають `onMouseDown={(e) => e.preventDefault()}` — це не критично для TipTap (його `chain().focus()` сам відновлює виділення), але запобігає зайвому миготінню фокусу між тулбаром і редактором.
+
+### Як використати
+
+1. Перетягни `Note / Примітка` з палітри (категорія *Visual / Візуальні*) на канвас.
+2. **Хапай за хедер-смужку** зверху, щоб пересунути стікер. Сам текстовий блок під хедером — це TipTap-редактор з `nodrag/nopan`, тому будь-який клік туди ставить курсор для редагування, а не запускає drag.
+3. У правій панелі введи **Title / Заголовок** — це назва стікера, яка зʼявиться у драг-смужці.
+4. Кліком у тіло стікера встанови курсор. Набери текст. За потреби виділи фрагмент.
+5. У правій панелі натискай **B/I/U/S** для inline-форматування виділеного фрагмента (кнопки одразу підсвітяться, відображаючи стан марок під курсором). Натискання БЕЗ виділення вмикає мітку для наступних набраних символів.
+6. Кнопками **L/C/R/J** обирай вирівнювання поточного абзацу — активне вирівнювання теж підсвічується.
+7. У селектах **Шрифт / Розмір** обери стиль для виділеного тексту. Якщо нічого не виділено, наступний набраний фрагмент почне з обраним шрифтом/розміром. Селект показує атрибути того фрагмента, де зараз стоїть курсор.
+8. Кнопкою **Колір виділеного** змінюй колір окремих слів/речень (TipTap inline color); кнопкою **Колір тексту** нижче — глобальний дефолтний колір контейнера (для фрагментів без власної color-марки).
+9. Один клік по пресету з блоку **«Quick themes / Популярні стилі»** перемикає тему: жовтий, зелений, блакитний, рожевий або графітовий. Або обери власні `text` / `background` у color-picker'ах нижче.
+10. Розмір стікера — кутовими ручками `NodeResizer`. Box тягнеться **live**: оновлення видно одразу під час драгу куточка, а не тільки на відпускання.
+11. Збережи воркфлоу — `title`, `html_content` (із усіма TipTap-марками `<span style="...">`), `width`, `height`, `background_color`, `text_color`, `font_family`, `font_size` поїдуть у JSON. Запуск воркфлоу спрацює як завжди: рушій ігнорує `note` і виконує лише логічні вузли.
 
 ---
 
@@ -752,7 +831,7 @@ ws.onmessage = (e) => console.log(JSON.parse(e.data));
 | `app/core/job_manager.py` | реєстр `Job` + супервайзер `asyncio.create_task`, sentinel `done` після фінішу |
 | `app/core/log_broker.py` | pub/sub на `asyncio.Queue` per `job_id` |
 | `app/core/context.py` | `ExecutionContext` — потокобезпечна спільна пам'ять (`asyncio.Lock`, `should_stop`, `first_error`) + `resolve_template(template, input_data)` зі snapshot'ами |
-| `app/nodes/base.py` | `BaseNode` ABC + `NODE_REGISTRY` + декоратори `@input_port`, `@output_port`, `@node_info`, `@static_connection`, `@register_node` + `get_schema()` |
+| `app/nodes/base.py` | `BaseNode` ABC + прапорець `is_visual_only` (для нот-стікерів, що ігноруються рушієм) + `NODE_REGISTRY` + декоратори `@input_port`, `@output_port`, `@node_info`, `@static_connection`, `@register_node` + `get_schema()` |
 | `app/nodes/<name>.py` | реалізація конкретного вузла (один файл — один вузол) |
 | `app/schemas/` | Pydantic-моделі: `Workflow`, `Node`, `Edge`, `Job`, `LogEntry`, конфіги вузлів |
 | `app/storage/file_storage.py` | сейв/лоад `Workflow` як JSON, валідація імен (`[A-Za-z0-9_-]{1,64}`) |
@@ -789,6 +868,7 @@ ws.onmessage = (e) => console.log(JSON.parse(e.data));
 | `log` | рендерить `config.message`, публікує `LogEntry` | `input`, `message` | `output` (passthrough) |
 | `custom_code` | викликає `async main()` зі `scripts/<name>.py` | `input` | `output` |
 | `expression` | обчислює довільний sandbox-вираз | `expression`, `input` | `result` |
+| `note` | **візуальний стікер для документування графа** (`is_visual_only=True`); рушій повністю ігнорує | — | — |
 
 ### Шаблони у конфігах
 
@@ -832,7 +912,8 @@ nexusflow/
 │   │   ├── read_file.py
 │   │   ├── write_file.py
 │   │   ├── condition.py
-│   │   └── log_node.py
+│   │   ├── log_node.py
+│   │   └── note_node.py        # візуальний стікер (is_visual_only=True)
 │   ├── schemas/
 │   │   ├── workflow.py
 │   │   ├── node_configs.py
@@ -867,7 +948,7 @@ pytest                                                                # усі �
 pytest --cov=app.core --cov=app.nodes --cov-report=term-missing       # з покриттям
 ```
 
-Поточний стан: **117 passed** — попередні 112 тестів MVP + **5 нових Async Ready Pool тестів** (паралельне виконання двох гілок зі sleep'ами за ~1 c, 6-вузловий пул за ~0.5 c, м'яка зупинка одного брата при падінні іншого, блокування невзятого вузла після `should_stop`, snapshot-безпечні шаблони під паралельним записом).
+Поточний стан: **119 passed** — 117 тестів попередніх етапів + **2 нових тести фільтрації візуальних вузлів** (`note` не лишає сліду в логах + фантомні ребра до note викидаються рушієм).
 
 ### Frontend
 ```bash

@@ -828,3 +828,60 @@ async def test_resolve_template_uses_snapshot_under_concurrent_writes(
     for i in range(8):
         assert f"s{i}" in result
         assert f"l{i}" in result
+
+
+# ---------- engine: visual-only nodes (Note) ----------
+
+async def test_note_nodes_are_filtered_before_execution(
+    ctx: ExecutionContext, fake_broker
+):
+    """Note (is_visual_only=True) має бути повністю невидимим для рушія:
+    жодного входу в node_outputs, жодного логу про нього, жодного
+    pending_count'у. Сусідні (виконувані) вузли працюють як завжди.
+    """
+    wf = Workflow.model_validate(
+        {
+            "name": "with_note",
+            "nodes": [
+                {"id": "t1", "type": "manual_trigger",
+                 "config": {"initial_data": {"x": 1}}},
+                {"id": "n1", "type": "note",
+                 "config": {"html_content": "<strong>doc me</strong>"}},
+                {"id": "l1", "type": "log", "config": {"message": "hi"}},
+            ],
+            "edges": [{"from": "t1", "to": "l1"}],
+        }
+    )
+    result = await _run(wf, ctx)
+    assert "t1" in result
+    assert "l1" in result
+    assert "n1" not in result
+    # Жоден лог не має згадувати note-вузол.
+    assert all(e.node_id != "n1" for _, e in fake_broker.entries)
+
+
+async def test_note_node_with_dangling_edges_is_dropped(ctx: ExecutionContext):
+    """Якщо у JSON-графі лишилися ребра, що торкаються note-вузла, рушій
+    має їх відкинути ще до topological_sort — інакше відбувся б фейл
+    pre-flight'а через невідомий тип/інші поля.
+    """
+    wf = Workflow.model_validate(
+        {
+            "name": "note_with_edges",
+            "nodes": [
+                {"id": "t1", "type": "manual_trigger", "config": {}},
+                {"id": "n1", "type": "note", "config": {}},
+                {"id": "l1", "type": "log", "config": {"message": "ok"}},
+            ],
+            "edges": [
+                {"from": "t1", "to": "l1"},
+                # «фантомне» ребро у note (фронт міг таке не створити, але
+                # ми гарантуємо стійкість).
+                {"from": "t1", "to": "n1"},
+                {"from": "n1", "to": "l1"},
+            ],
+        }
+    )
+    result = await _run(wf, ctx)
+    assert "t1" in result and "l1" in result
+    assert "n1" not in result

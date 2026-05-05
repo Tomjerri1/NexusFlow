@@ -20,8 +20,8 @@ class WriteFileConfig(BaseModel):
     """Шлях/вміст можуть бути порожніми, якщо приходять через порти `path`/`content`."""
 
     path: str = ""
-    # Якщо задано — записується саме цей текст (підтримує шаблони
-    # `{input.x}` / `{nodes.id.y}`). Якщо `None` — fallback на `content_key`.
+    # If specified, this text is written (supports templates
+    # `{input.x}` / `{nodes.id.y}`). If `None`, fallback to `content_key`.
     content: str | None = None
     content_key: str = "content"
     append: bool = False
@@ -64,6 +64,24 @@ class ExpressionConfig(BaseModel):
     expression: str = Field(min_length=1)
 
 
+class NoteConfig(BaseModel):
+    """Візуальний стікер. Не бере участі у виконанні графа.
+
+    Двигун повністю ігнорує вузли з типом `note` (через прапорець
+    `BaseNode.is_visual_only=True`): такі вузли відфільтровуються ще до
+    топологічного сортування й побудови _RunState.
+    """
+
+    title: str = "Примітка"
+    html_content: str = ""
+    width: float = 240
+    height: float = 160
+    background_color: str = "#fef3c7"
+    text_color: str = "#1f2937"
+    font_family: str = "system-ui, sans-serif"
+    font_size: float = 14.0
+
+
 CONFIG_MAP: dict[str, type[BaseModel]] = {
     "manual_trigger": ManualTriggerConfig,
     "read_file": ReadFileConfig,
@@ -72,6 +90,7 @@ CONFIG_MAP: dict[str, type[BaseModel]] = {
     "log": LogNodeConfig,
     "custom_code": CustomCodeConfig,
     "expression": ExpressionConfig,
+    "note": NoteConfig,
 }
 
 

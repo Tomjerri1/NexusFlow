@@ -54,18 +54,32 @@ function computeLayout(nodes, edges) {
 export function workflowToFlow(workflow) {
   const positions = computeLayout(workflow.nodes || [], workflow.edges || []);
 
-  const flowNodes = (workflow.nodes || []).map((n) => ({
-    id: n.id,
-    type: "nexus",
-    position: positions[n.id] || { x: 40, y: 40 },
-    data: {
-      type: n.type,
-      config: structuredClone(n.config ?? {}),
-      // Системний атрибут — як двигун трактує вхідні ребра (AND/OR).
-      // Дефолт `all_success` синхронізовано з Pydantic-моделлю Node.
-      trigger_rule: n.trigger_rule || "all_success",
-    },
-  }));
+  const flowNodes = (workflow.nodes || []).map((n) => {
+    const cfg = structuredClone(n.config ?? {});
+    // Візуальні стікери `note` мають окремий React Flow type'у і
+    // тримають width/height у `data.config` (рушій ігнорує цей вузол).
+    const reactFlowType = n.type === "note" ? "note" : "nexus";
+    const node = {
+      id: n.id,
+      type: reactFlowType,
+      position: positions[n.id] || { x: 40, y: 40 },
+      data: {
+        type: n.type,
+        config: cfg,
+        // Системний атрибут — як двигун трактує вхідні ребра (AND/OR).
+        // Дефолт `all_success` синхронізовано з Pydantic-моделлю Node.
+        trigger_rule: n.trigger_rule || "all_success",
+      },
+    };
+    if (n.type === "note") {
+      // React Flow читає `style.width/height` для resize-bbox; ми
+      // дублюємо їх із config, щоб NodeResizer стартував з правильним
+      // розміром одразу після завантаження сценарію.
+      if (typeof cfg.width === "number") node.style = { ...(node.style || {}), width: cfg.width };
+      if (typeof cfg.height === "number") node.style = { ...(node.style || {}), height: cfg.height };
+    }
+    return node;
+  });
 
   const flowEdges = (workflow.edges || []).map((e, i) => {
     const src = e.from ?? e.from_node;
