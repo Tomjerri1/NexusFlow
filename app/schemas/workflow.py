@@ -69,6 +69,14 @@ class Node(BaseModel):
 
     inputs: dict[str, NodeInputValue] | None = Field(default=None, exclude=True)
 
+    # UI Metadata Pocket: непрозорий словник для фронтенду (координати на
+    # канвасі, розміри стікерів, згорнутість груп тощо). Двигун у це поле
+    # НЕ заглядає — воно існує лише для round-trip між React Flow і JSON.
+    # Тому валідація — мінімальна (тільки тип `dict`), без власної схеми.
+    # Типовий вміст із фронтенду:
+    #   {"position": {"x": 120.5, "y": 40}, "width": 240, "height": 160}
+    ui_metadata: dict = Field(default_factory=dict)
+
 
 class Workflow(BaseModel):
     """JSON-граф workflow. Валідатор перевіряє унікальність id вузлів

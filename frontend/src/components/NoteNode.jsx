@@ -34,16 +34,19 @@ export default function NoteNode({ id, data, selected }) {
   const isReadonly = !isDraggable;
 
   const config = data?.config || {};
+  const uiMeta = data?.ui_metadata || {};
   const {
     title = "Примітка",
     html_content = "",
-    width = 240,
-    height = 160,
     background_color = "#fef3c7",
     text_color = "#1f2937",
     font_family = "system-ui, sans-serif",
     font_size = 14,
   } = config;
+  // width/height тепер живуть у `ui_metadata` (UI Metadata Pocket).
+  // Fallback на старий config — для воркфлоу, збережених до фічі ui_metadata.
+  const width = uiMeta.width ?? config.width ?? 240;
+  const height = uiMeta.height ?? config.height ?? 160;
 
   // Updating data.config via ReactFlow.setNodes is a single source of truth.
   const patchConfig = (patch) => {
@@ -55,6 +58,26 @@ export default function NoteNode({ id, data, selected }) {
               data: {
                 ...n.data,
                 config: { ...(n.data?.config || {}), ...patch },
+              },
+            }
+          : n
+      )
+    );
+  };
+
+  // Те саме, що patchConfig, але мутує `data.ui_metadata` — кишеню для
+  // візуальних/UI-only атрибутів (розмір стікера, в майбутньому: згорнутість
+  // груп тощо). Логічний `config` залишається чистим, а двигун узагалі
+  // не заглядає у це поле.
+  const patchUiMetadata = (patch) => {
+    reactFlow.setNodes((nodes) =>
+      nodes.map((n) =>
+        n.id === id
+          ? {
+              ...n,
+              data: {
+                ...n.data,
+                ui_metadata: { ...(n.data?.ui_metadata || {}), ...patch },
               },
             }
           : n
@@ -117,13 +140,17 @@ export default function NoteNode({ id, data, selected }) {
     editor.commands.setContent(html_content || "<p></p>", { emitUpdate: false });
   }, [editor, html_content]);
 
-  // Resizing: write SIZE in data.config only on onResizeEnd (during drag, NodeResizer updates the React Flow style of the live node, and our wrapper with w-full/h-full simply drags after it).
+  // Resize: пишемо width/height у `data.ui_metadata` тільки на onResizeEnd
+  // (під час драгу NodeResizer оновлює React Flow `node.style.width/height`
+  // live, а наш wrapper із w-full/h-full просто тягнеться за ним).
+  // Раніше це писалося у `data.config` — тепер UI Metadata Pocket тримає
+  // логічний config чистим від візуальних атрибутів.
   const handleResizeEnd = (_evt, params) => {
     if (!params) return;
     const w = Math.round(params.width);
     const h = Math.round(params.height);
     if (w === width && h === height) return;
-    patchConfig({ width: w, height: h });
+    patchUiMetadata({ width: w, height: h });
   };
 
   return (

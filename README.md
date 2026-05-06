@@ -165,7 +165,7 @@ finally:
 
 ## Frontend (React Flow редактор)
 
-Стек: **Vite 5 + React 18 + Tailwind 3 + `@xyflow/react` + `@tiptap/react`** (для візуальної ноти-стікера, див. нижче), без TypeScript і без зовнішніх i18n-бібліотек.
+Стек: **Vite 5 + React 18 + Tailwind 3 + `@xyflow/react` + `@tiptap/react`** (для візуальної ноти-стікера, див. нижче) + **`dagre`** (auto-layout під час завантаження сценаріїв без координат), без TypeScript і без зовнішніх i18n-бібліотек.
 
 ### Інтерфейс
 
@@ -276,8 +276,107 @@ curl -X POST http://localhost:8000/jobs/run -H "Content-Type: application/json" 
 
 Сценарії зберігаються як JSON-файли у `workflows/`. UI редактор уміє:
 
-- **Завантажувати** будь-який збережений сценарій одним кліком — у лівій палітрі під списком вузлів є секція **«Saved workflows / Збережені сценарії»** зі списком імен (`GET /workflows`). Клацання по імені тягне `GET /workflows/<name>`, конвертує JSON у React Flow-стан і замінює канвас. Координати не зберігаються в JSON — UI робить простий **layered-layout** на основі топологічних рівнів (`x = layer × 280, y = slot × 130`), тож одразу видно граф.
-- **Зберігати** поточний канвас однією кнопкою — у `RunPanel` поруч із «Run workflow» з'явилася кнопка **«Save / Зберегти»**. Вона серіалізує канвас у backend-формат (включно з `source_handle` / `target_handle`), кидає `POST /workflows`, і після успіху палітра автоматично оновлює список (через лічильник `workflowsRefresh` в `App.jsx`).
+- **Завантажувати** будь-який збережений сценарій одним кліком — у лівій палітрі під списком вузлів є секція **«Saved workflows / Збережені сценарії»** зі списком імен (`GET /workflows`). Клацання по імені тягне `GET /workflows/<name>`, конвертує JSON у React Flow-стан і замінює канвас. **Координати тепер живуть у `Node.ui_metadata.position`** — див. секцію [UI Metadata Pocket + Dagre auto-layout](#ui-metadata-pocket--dagre-auto-layout). Якщо позицій нема (старий сценарій або щойно згенерований із Python-коду), фронтенд авто-розкладає граф через **Dagre** (`rankdir: LR`) і вузли не накладаються.
+- **Зберігати** поточний канвас однією кнопкою — у `RunPanel` поруч із «Run workflow» з'явилася кнопка **«Save / Зберегти»**. Вона серіалізує канвас у backend-формат (включно з `source_handle` / `target_handle` і `ui_metadata.position`), кидає `POST /workflows`, і після успіху палітра автоматично оновлює список (через лічильник `workflowsRefresh` в `App.jsx`).
+
+### UI Metadata Pocket + Dagre auto-layout
+
+Раніше було дві проблеми:
+
+1. **Бекенд губив координати** при збереженні JSON (`Node` мав лише `id/type/config/trigger_rule`). Кожне завантаження викидало граф у примітивний layered-layout `x = layer*280, y = slot*130`.
+2. **Layered-layout накладав вузли** на нетривіальних графах — особливо для сценаріїв, згенерованих з Python-коду через `Workflow(...)` без візуальних координат: гілки condition'а та merge-вузли стрибали один на одного.
+
+Ми вирішили це двома узгодженими змінами на бекенді й фронтенді.
+
+#### Бекенд: `Node.ui_metadata: dict`
+
+`app/schemas/workflow.py` має нове поле:
+
+```python
+class Node(BaseModel):
+    id: str
+    type: NodeType
+    config: dict = Field(default_factory=dict)
+    trigger_rule: TriggerRule = "all_success"
+    inputs: dict | None = Field(default=None, exclude=True)
+    ui_metadata: dict = Field(default_factory=dict)   # <-- pocket
+```
+
+Це **«тупий» словник** для UI: координати, розміри стікерів, у майбутньому — згорнутість груп тощо. Двигун (`WorkflowEngine`, `JobManager`, `ExecutionContext`) у це поле НЕ заглядає; жодних змін у виконанні графа немає. Валідація — мінімальна (тільки тип `dict`), без вкладеної схеми, бо «pocket» свідомо лишається непрозорим контрактом між UI та JSON. У збереженому JSON воно виглядає так:
+
+```json
+{
+  "id": "trigger_1",
+  "type": "manual_trigger",
+  "config": {"initial_data": {"flag": true}},
+  "ui_metadata": {"position": {"x": 120, "y": 40}}
+}
+```
+
+Для note-стікерів додатково присутні `width` / `height`:
+
+```json
+{
+  "id": "note_1",
+  "type": "note",
+  "config": {"title": "Огляд", "html_content": "<p>...</p>"},
+  "ui_metadata": {"position": {"x": 800, "y": 200}, "width": 320, "height": 200}
+}
+```
+
+Раніше width/height жили у `config` стікера; тепер ми тримаємо `config` чистим від візуальних атрибутів. Старі сценарії продовжують вантажитися: `NoteConfig.width/height` лишаються з дефолтами, а фронтенд читає їх як fallback, якщо `ui_metadata` ще не заповнене.
+
+#### Фронтенд: Dagre layout у `workflowIO.js`
+
+Бібліотека [`dagre`](https://github.com/dagrejs/dagre) — індустріальний стандарт для авто-розкладки DAG'ів (нею ж користуються React Flow examples, n8n, Mermaid). У `frontend/src/workflowIO.js`:
+
+```javascript
+function computeLayout(nodes, edges) {
+  const g = new dagre.graphlib.Graph();
+  g.setGraph({ rankdir: "LR", nodesep: 50, ranksep: 200 });
+  // ... setNode/setEdge ...
+  dagre.layout(g);
+  // dagre повертає координати ЦЕНТРУ → переводимо в TL для React Flow.
+  return positions;
+}
+```
+
+- **`rankdir: "LR"`** — зліва направо, узгоджено з нашою mental-model «trigger → ... → output».
+- **`nodesep: 50`, `ranksep: 200`** — щедрі відступи між вузлами одного шару й між шарами, щоб handle'и портів не торкалися сусідніх вузлів.
+- Для note-стікерів передаємо їхній РЕАЛЬНИЙ розмір (з ui_metadata або config) — щоб великий стікер не зіткнувся з сусідами.
+
+**Коли запускається dagre.** На load'і ми перевіряємо: чи у ВСІХ вузлів є `ui_metadata.position`?
+
+- Якщо так → беремо позиції з JSON (round-trip, нічого не пересувається).
+- Якщо хоча б одного нема → проганяємо весь граф через dagre і використовуємо обчислені позиції лише для тих вузлів, у яких немає явної. (На практиці dagre викликається на «свіжих» сценаріях із Python-коду та на одноразовій міграції старих JSON.)
+
+Це покриває обидва кейси:
+- Сценарій згенерований через `create_complex_workflow.py` → у нього взагалі нема `ui_metadata` → авто-розкладка Dagre дає одразу читабельний граф.
+- Сценарій збережений із UI → `ui_metadata.position` присутній на кожному вузлі → завантажується «де лишили».
+
+**Save** (`flowToWorkflow`) пише `ui_metadata.position = {x, y}` із `n.position` React Flow для КОЖНОГО вузла, плюс `width`/`height` для note-стікерів (із пріоритетом `n.style` → `data.ui_metadata` → дефолт). Тригер-правило та config лишаються в окремих корекційних полях, тож JSON залишається передбачуваним.
+
+#### Resize-handler пише в `data.ui_metadata`
+
+`NoteNode.handleResizeEnd` тепер мутує `data.ui_metadata`, а не `data.config`:
+
+```jsx
+const patchUiMetadata = (patch) => {
+  reactFlow.setNodes((nodes) =>
+    nodes.map((n) =>
+      n.id === id
+        ? { ...n, data: { ...n.data, ui_metadata: { ...(n.data?.ui_metadata || {}), ...patch } } }
+        : n
+    )
+  );
+};
+// ...
+const handleResizeEnd = (_evt, params) => {
+  patchUiMetadata({ width: Math.round(params.width), height: Math.round(params.height) });
+};
+```
+
+Логічний `config` (`html_content`, `title`, `font_*`, `*_color`) лишається undisturbed. Аналогічно `FlowCanvas.onDrop` для нових нот одразу засіває `data.ui_metadata: { width: 240, height: 160 }`, щоб NoteNode/save-цикл читали з єдиного джерела.
 
 ### REST-контракт
 
@@ -334,7 +433,7 @@ class NoteConfig(BaseModel):
     font_size: int = 14
 ```
 
-`width/height` зберігаються прямо у `data.config` стікера — щоб новий розмір зберігся у JSON-сценарію після ресайзу. `title` — короткий заголовок стікера, який рендериться у драг-смужці хедера на канвасі (див. нижче).
+`title` — короткий заголовок стікера, який рендериться у драг-смужці хедера на канвасі (див. нижче). `width/height` лишаються у `NoteConfig` лише для backward-compat зі старими сценаріями: новий канон — **`Node.ui_metadata.width/height`** (див. секцію [UI Metadata Pocket + Dagre auto-layout](#ui-metadata-pocket--dagre-auto-layout)). При load'і фронтенд читає `ui_metadata` у пріоритеті, з fallback'ом на `config` для не-мігрованих JSON; на save'і пише тільки в `ui_metadata`.
 
 ### Frontend (`NoteNode.jsx`) — TipTap edition
 
@@ -344,7 +443,7 @@ class NoteConfig(BaseModel):
 - **Синк DOM → React Flow state**: тільки на `onBlur` редактора. На кожен символ ми НЕ оновлюємо `data.config.html_content` (це бомбардувало б ReactFlow.setNodes). Зовнішнє оновлення `html_content` (наприклад, завантажили інший воркфлоу) перезаписує контент через `editor.commands.setContent(...)` лише коли редактор НЕ у фокусі — інакше зруйнувало б введення.
 - **Хедер-смужка зверху — драг-зона.** На неї виводиться `config.title` (напівжирним, ледь меншим шрифтом). Хедер НЕ має класу `nodrag`, тому саме за нього React Flow рухає вузол по канвасу. Принципово важливо: інлайн-style хедера ЖОРСТКО прибиває системний шрифт і фіксований розмір 12px — інакше зміна `font_family`/`font_size` усередині редактора повзла б на заголовок, і у графі з'являлися б дивно великі курсивні шапки.
 - **`nodrag` + `nopan`** на корені ProseMirror (передаємо через `editorProps.attributes.class`) — інакше React Flow перехоплював би drag миші замість виділення тексту.
-- **Layout — `flex flex-col` + `w-full h-full`.** Внутрішній контейнер не задає власних `width/height` у `style` — він тягнеться за React Flow node-контейнером, розмір якого живе в `style.width/height` самого React Flow вузла. `<NodeResizer />` оновлює ці розміри **live** під час драгу куточка, а не тільки на `onResizeEnd`. Стартовий розмір (`240×160`) виставляє `FlowCanvas.onDrop` через `style: { width: 240, height: 160 }` на новоствореному вузлі; на `onResizeEnd` ми додатково синкаємо нові значення у `data.config.width/height`, щоб вони збереглись у JSON. EditorContent додатково отримує `flex-1 min-h-0` — без `min-h-0` flex-child не дав би внутрішньому `overflow-auto` спрацювати.
+- **Layout — `flex flex-col` + `w-full h-full`.** Внутрішній контейнер не задає власних `width/height` у `style` — він тягнеться за React Flow node-контейнером, розмір якого живе в `style.width/height` самого React Flow вузла. `<NodeResizer />` оновлює ці розміри **live** під час драгу куточка, а не тільки на `onResizeEnd`. Стартовий розмір (`240×160`) виставляє `FlowCanvas.onDrop` через `style: { width: 240, height: 160 }` + `data.ui_metadata: { width: 240, height: 160 }`. На `onResizeEnd` `NoteNode` викликає `patchUiMetadata({ width, height })` — нові значення летять у `data.ui_metadata`, а звідти `flowToWorkflow` записує їх у `Node.ui_metadata` JSON-сценарію. Логічний `config` лишається чистим (без візуальних атрибутів). EditorContent додатково отримує `flex-1 min-h-0` — без `min-h-0` flex-child не дав би внутрішньому `overflow-auto` спрацювати.
 - **Безпека**: TipTap парсить вхідний HTML через свою ProseMirror-схему й автоматично відкидає теги/атрибути, яких немає у завантажених розширеннях. Тобто `<script>`, `<iframe>`, `onerror=` тощо вирізаються самим парсером — окремий DOMPurify більше не потрібен. Ліміт довжини тексту — **10 000 символів**; на blur, якщо редактор перевищує ліміт, ми просто не зберігаємо нову версію в config (контент у редакторі лишається, але JSON не «брудниться»).
 
 ### Frontend (`ConfigPanel.jsx`) — Toolbar bypass

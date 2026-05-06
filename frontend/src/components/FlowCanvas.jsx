@@ -103,6 +103,7 @@ export default function FlowCanvas({
       // Візуальний стікер `note` рендериться окремим React Flow type'ом
       // (без хедера/портів). Усі решта — універсальний `nexus` вузол.
       const reactFlowType = type === "note" ? "note" : "nexus";
+      const isNote = type === "note";
       const newNode = {
         id,
         type: reactFlowType,
@@ -111,12 +112,15 @@ export default function FlowCanvas({
           type,
           config: structuredClone(DEFAULT_CONFIG[type]),
           trigger_rule: "all_success",
+          // Для note одразу засіваємо UI Metadata Pocket (width/height) —
+          // щоб NoteNode читав розмір із того ж джерела, куди потім писатиме
+          // resize-handler. position/координати ми не дублюємо в ui_metadata
+          // тут — flowToWorkflow зчитає їх із n.position на момент save'у.
+          ui_metadata: isNote ? { width: 240, height: 160 } : {},
         },
-        // Для note виставляємо стартовий розмір на рівні React Flow node
-        // (style.width/height). NoteNode тепер тягнеться через w-full/h-full,
-        // тож саме React Flow контейнер диктує його bbox — і NodeResizer
-        // оновлює ці розміри live під час драгу куточка.
-        ...(type === "note" ? { style: { width: 240, height: 160 } } : {}),
+        // Стартовий розмір на рівні React Flow node — щоб NodeResizer мав
+        // bbox, навіть поки в data.ui_metadata ще нічого нема.
+        ...(isNote ? { style: { width: 240, height: 160 } } : {}),
       };
       setNodes((ns) => ns.concat(newNode));
     },

@@ -29,7 +29,7 @@ export default function CustomNode({ id, data, selected }) {
   return (
     <div
       className={
-        "min-w-[210px] rounded-md border bg-nexus-panel shadow text-nexus-text " +
+        "min-w-[210px] max-w-[260px] rounded-md border bg-nexus-panel shadow text-nexus-text " +
         (selected ? "border-nexus-accent" : "border-nexus-border")
       }
     >

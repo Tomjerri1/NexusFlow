@@ -59,7 +59,7 @@ export function summarize(type, config) {
     case "condition":
       return config?.expression || "—";
     case "log":
-      return (config?.message || "").slice(0, 40);
+      return config?.message || "—";
     case "custom_code":
       return `${config?.script_name || "—"}.${config?.entry_point || "main"}()`;
     case "expression":
