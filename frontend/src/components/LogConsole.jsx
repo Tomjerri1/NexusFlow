@@ -9,23 +9,31 @@ const LEVEL_COLORS = {
   done: "text-emerald-400 font-semibold",
 };
 
+// Інтервал злиття буфера в state. 150 мс — компроміс між плавністю
+// та захистом від рендер-шторму на ~1000 логів/с (≤ 7 рендерів/с).
+const FLUSH_INTERVAL_MS = 150;
+
 export default function LogConsole({ jobId, onJobFinished }) {
   const { t } = useTranslation();
   const [entries, setEntries] = useState([]);
   const scrollRef = useRef(null);
+  const bufferRef = useRef([]);
 
   useEffect(() => {
     if (!jobId) {
       setEntries([]);
+      bufferRef.current = [];
       return;
     }
 
     setEntries([]);
+    bufferRef.current = [];
+
     const ws = openLogsSocket(jobId);
     ws.onmessage = (event) => {
       try {
         const entry = JSON.parse(event.data);
-        setEntries((prev) => prev.concat(entry));
+        bufferRef.current.push(entry);
         if (entry.level === "done") {
           onJobFinished?.(jobId);
         }
@@ -33,7 +41,19 @@ export default function LogConsole({ jobId, onJobFinished }) {
         /* ignore malformed payloads */
       }
     };
-    return () => ws.close();
+
+    const flushTimer = setInterval(() => {
+      if (bufferRef.current.length === 0) return;
+      const batch = bufferRef.current;
+      bufferRef.current = [];
+      setEntries((prev) => prev.concat(batch));
+    }, FLUSH_INTERVAL_MS);
+
+    return () => {
+      clearInterval(flushTimer);
+      ws.close();
+      bufferRef.current = [];
+    };
   }, [jobId, onJobFinished]);
 
   // автоскрол униз при новому повідомленні

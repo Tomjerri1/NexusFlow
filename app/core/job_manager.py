@@ -34,11 +34,16 @@ class JobManager:
         )
         self._jobs[job.id] = job
         self._tasks[job.id] = asyncio.create_task(self._run(workflow, job))
-        # Механізм TTL (Time To Live) за кількістю
+        # Механізм TTL (Time To Live) за кількістю.
+        # Якщо найстаріший job ще не дограв (наприклад, нескінченний цикл
+        # у користувацькому коді), його asyncio.Task треба явно скасувати,
+        # інакше витік пам'яті/CPU: словник звільнено, а корутина живе.
         MAX_JOBS = 500
         if len(self._jobs) > MAX_JOBS:
-            # Видаляємо найстаріший ключ
             oldest_key = next(iter(self._jobs))
+            stale_task = self._tasks.pop(oldest_key, None)
+            if stale_task is not None and not stale_task.done():
+                stale_task.cancel()
             self._jobs.pop(oldest_key, None)
 
         return job

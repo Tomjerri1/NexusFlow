@@ -218,6 +218,7 @@ class Workflow(BaseModel):
         # dependency at module load time. Lazy form is safe,
         # because the validator is called only during `model_validate`.
         from app.core.scheduler import CycleDetectedError, topological_sort
+        from app.nodes.base import NODE_REGISTRY
 
         try:
             topological_sort(self.nodes, self.edges)
@@ -226,5 +227,30 @@ class Workflow(BaseModel):
                 f"Workflow graph is not a DAG — cycle detected involving "
                 f"nodes: {exc.cycle_node_ids}"
             ) from exc
+
+        # Required-port satisfaction. Кожен `@input_port(..., required=True)`
+        # повинен мати або вхідне ребро на свій `target_handle`, або
+        # непорожнє значення в `node.config[<port_name>]`. Інакше рушій
+        # упаде з невиразним рантайм-помилкою — краще fail-loud на валідації.
+        # Порожнім вважаємо лише `None` та `""`; `False`/`0`/`[]` — валідні.
+        for node in self.nodes:
+            cls = NODE_REGISTRY.get(node.type)
+            if cls is None:
+                continue
+            ports = getattr(cls, "__inputs__", [])
+            for port in ports:
+                if not getattr(port, "required", False):
+                    continue
+                has_edge = any(
+                    e.to_node == node.id and e.target_handle == port.name
+                    for e in self.edges
+                )
+                config_value = node.config.get(port.name) if isinstance(node.config, dict) else None
+                has_config = config_value is not None and config_value != ""
+                if not has_edge and not has_config:
+                    raise ValueError(
+                        f"Node {node.id!r} is missing required input for port "
+                        f"{port.name!r} (no edge connected and no config value provided)"
+                    )
 
         return self

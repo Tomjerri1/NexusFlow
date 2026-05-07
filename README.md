@@ -19,12 +19,14 @@ JSON описує граф (вузли + ребра) → рушій будує �
 - [Гібридна модель декларативного мапінгу](#гібридна-модель-декларативного-мапінгу)
 - [Автоматична конвертація типів між портами](#автоматична-конвертація-типів-між-портами)
 - [Перевірка ациклічності на етапі валідації](#перевірка-ациклічності-на-етапі-валідації)
+- [Розумна валідація обов'язкових портів](#розумна-валідація-обовязкових-портів)
 - [Пропуск «мертвих» гілок (dead-branch cascade)](#пропуск-мертвих-гілок-dead-branch-cascade)
 - [Trigger Rules (правила активації вузла)](#trigger-rules-правила-активації-вузла)
 - [Input Referencing (code-first скорочення)](#input-referencing-code-first-скорочення)
 - [Read-only режим (Static Connections)](#readonly-режим-зв-язків)
 - [Динамічна панель налаштувань](#динамічна-панель-налаштувань-json-schema-driven)
 - [WebSocket: live-логи](#websocket-live-логи)
+- [TTL у JobManager (захист від витоку пам'яті)](#ttl-у-jobmanager-захист-від-витоку-памяті)
 - [Архітектура](#архітектура)
 - [Структура проєкту](#структура-проєкту)
 - [Тести](#тести)
@@ -588,6 +590,94 @@ except CycleDetectedError as exc:
 
 ---
 
+## Розумна валідація обов'язкових портів
+
+Якщо у вузла є вхідний порт із `@input_port(..., required=True)`, рушій раніше дізнавався про відсутність даних **прямо під час виконання** — `execute()` падав із невиразним `ValueError`/`KeyError` десь усередині, job отримував `FAILED`. Тепер це перевіряється у тому самому Pydantic-валідаторі `_check_graph_integrity` — **до старту job'а**, з чітким повідомленням, який саме порт треба годувати.
+
+### Як це працює
+
+У `_check_graph_integrity` додано лінивий імпорт реєстру вузлів і обхід усіх `required=True`-портів:
+
+```python
+from app.nodes.base import NODE_REGISTRY
+
+for node in self.nodes:
+    cls = NODE_REGISTRY.get(node.type)
+    if cls is None:
+        continue
+    for port in getattr(cls, "__inputs__", []):
+        if not getattr(port, "required", False):
+            continue
+        has_edge = any(
+            e.to_node == node.id and e.target_handle == port.name
+            for e in self.edges
+        )
+        config_value = node.config.get(port.name) if isinstance(node.config, dict) else None
+        has_config = config_value is not None and config_value != ""
+        if not has_edge and not has_config:
+            raise ValueError(
+                f"Node {node.id!r} is missing required input for port "
+                f"{port.name!r} (no edge connected and no config value provided)"
+            )
+```
+
+### Контракт «непорожнього значення»
+
+| Значення в `config[port.name]` | Вважається «надано»?         |
+|--------------------------------|------------------------------|
+| `None`                         | ❌ ні (треба ребро або значення) |
+| `""` (порожній рядок)          | ❌ ні                         |
+| `False` / `0` / `0.0`          | ✅ так — це валідні дані      |
+| `[]` / `{}`                    | ✅ так (порожній контейнер ≠ відсутність) |
+| будь-який інший літерал/dict   | ✅ так                        |
+
+Це усвідомлений компроміс: нуль і `False` для багатьох вузлів — цілком валідне «налаштування» (наприклад, `append: false` чи `delay: 0`). Порожнім лишається тільки те, що з 99 % імовірністю означає «забув заповнити».
+
+### Чому лінивий імпорт `NODE_REGISTRY`
+
+Файл `app.nodes.base` сам не імпортує `Workflow`, але `app/nodes/__init__.py` під час auto-discovery протягує транзитивно `app.core.engine` → `app.schemas.workflow`. Top-level імпорт `NODE_REGISTRY` у `workflow.py` дав би **circular import** на старті процесу. Лінивий імпорт виконується вже після того, як `discover_nodes()` зареєструвала всі класи — тож валідатор гарантовано бачить актуальний реєстр.
+
+### Що бачить користувач
+
+| Шлях входу                         | Поведінка                                                                  |
+|------------------------------------|----------------------------------------------------------------------------|
+| `Workflow.model_validate({...})`   | `pydantic.ValidationError` із текстом `Node 'w1' is missing required input for port 'path' (no edge connected and no config value provided)` |
+| `POST /jobs/run` без `path`        | **HTTP 422** із тим самим текстом — job навіть не стартує, статус `FAILED` теж не пишеться (запис у `JobManager` не створюється) |
+| Збережений JSON без обов'язкового порту | `load_workflow(...)` падає з `ValidationError`, фронтенд показує помилку у тостері |
+
+### Що НЕ перевіряється
+
+- **Порти `required=False`.** Як і раніше — їх відсутність не блокує валідацію (тип `any`, fallback у `legacy merge`).
+- **Тип значення.** Перевіряється лише факт «непорожнє». Type-coercion між портами все ще робить рушій під час виконання (див. секцію «Автоматична конвертація типів між портами»).
+- **Невідомий `node.type`.** Якщо вузла нема у `NODE_REGISTRY` (наприклад, користувач написав свій тип, який ще не зарегано), валідатор просто пропускає його — `Literal` із `NodeType` уже встиг би заборонити невідомий тип раніше.
+
+### Приклад правильного й неправильного workflow
+
+❌ Не пройде валідацію:
+```json
+{
+  "name": "missing_path",
+  "nodes": [
+    {"id": "t1", "type": "manual_trigger", "config": {"initial_data": {"x": 1}}},
+    {"id": "w1", "type": "write_file", "config": {}}
+  ],
+  "edges": [{"from": "t1", "to": "w1"}]
+}
+```
+→ `Node 'w1' is missing required input for port 'path' (no edge connected and no config value provided)`. Ребро `t1 → w1` тут **не рятує** — у нього `target_handle == None`, тобто це legacy merge, а не явний мапінг у порт `path`.
+
+✅ Пройдуть обидва варіанти:
+
+```json
+// Варіант 1: значення в config
+{"id": "w1", "type": "write_file", "config": {"path": "out.txt"}}
+
+// Варіант 2: ребро на конкретний target_handle
+{"from": "t1", "to": "w1", "source_handle": "data", "target_handle": "path"}
+```
+
+---
+
 ## Пропуск «мертвих» гілок (dead-branch cascade)
 
 Коли `condition`-вузол обирає одну гілку (`true` або `false`), уся **інша** гілка має бути повністю проігнорована — `execute()` для нащадків не викликається. У `WorkflowEngine` це реалізовано через дві множини, які наповнюються в міру топологічного обходу графа:
@@ -870,6 +960,60 @@ const ws = new WebSocket("ws://localhost:8000/ws/jobs/<job_id>");
 ws.onmessage = (e) => console.log(JSON.parse(e.data));
 ```
 
+### Буферизація логів у `LogConsole.jsx`
+
+Раніше `ws.onmessage` викликав `setEntries((prev) => prev.concat(entry))` миттєво на кожне повідомлення — на «балакучому» воркфлоу (1000 логів/с) React задихався від кількості рендерів і вкладка зависала. Тепер у `frontend/src/components/LogConsole.jsx` стоїть **батчинг через `useRef` + `setInterval`**:
+
+```jsx
+const bufferRef = useRef([]);
+
+ws.onmessage = (event) => {
+  const entry = JSON.parse(event.data);
+  bufferRef.current.push(entry);                  // O(1), без рендеру
+  if (entry.level === "done") onJobFinished?.(jobId);
+};
+
+const flushTimer = setInterval(() => {
+  if (bufferRef.current.length === 0) return;
+  const batch = bufferRef.current;
+  bufferRef.current = [];
+  setEntries((prev) => prev.concat(batch));       // ≤ 7 рендерів/с
+}, 150);
+
+return () => { clearInterval(flushTimer); ws.close(); bufferRef.current = []; };
+```
+
+- **Чому `useRef`, а не змінна модуля.** Буфер живе разом із компонентом і скидається при зміні `jobId` — інакше при швидкому перемиканні між job'ами хвости попереднього стріму потрапили б у новий лог.
+- **Чому 150 мс.** Око фіксує оновлення приблизно з 100–150 мс затримкою як «миттєве», а 1000 логів/с проходять у 6–7 рендерів замість 1000 — браузер залишається responsive навіть на гігантських сценаріях.
+- **Cleanup.** `clearInterval` у return-функції `useEffect` гарантує, що при розмонтовуванні компонента або зміні `jobId` таймер не залишиться висіти і не викличе `setState` на демонтованому компоненті (warning React'а).
+
+---
+
+## TTL у JobManager (захист від витоку пам'яті)
+
+`JobManager` тримає всі запуски **у пам'яті** (`self._jobs: dict[str, Job]`) і не персистить їх — після рестарту сервера історія зникає. Щоб словник не ріс безмежно, у `submit()` стоїть жорсткий ліміт `MAX_JOBS = 500`: коли він перевищується, найстаріший ключ видаляється.
+
+Раніше викидання обмежувалось `self._jobs.pop(oldest_key, None)` — і тут була пастка: якщо найстаріший job **завис** (наприклад, нескінченний цикл у `custom_code` або довгий `await` без таймауту), його `asyncio.Task` продовжував крутитись у фоні. Словник звільнили, а корутина живе → витік і пам'яті, і CPU.
+
+Зараз TTL **гарантовано вбиває фоновий таск**:
+
+```python
+# app/core/job_manager.py
+MAX_JOBS = 500
+if len(self._jobs) > MAX_JOBS:
+    oldest_key = next(iter(self._jobs))
+    stale_task = self._tasks.pop(oldest_key, None)
+    if stale_task is not None and not stale_task.done():
+        stale_task.cancel()                   # CancelledError у корутині
+    self._jobs.pop(oldest_key, None)
+```
+
+- **Порядок важливий.** Спочатку `pop` із `_tasks`, потім `cancel()`, потім `pop` із `_jobs` — щоб у момент скасування `_run` не намагався прибирати свій же запис із `_tasks` повторно (там стоїть `pop(..., None)`, тому й одинарний пробіг безпечний).
+- **`task.done()` check.** Якщо job уже встиг завершитись (success/failed) — таск done, `cancel()` неактуальний, просто чистимо словники.
+- **`CancelledError` дострілює `_run` через `finally`.** Sentinel `LogEntry(level="done")` усе одно публікується (best-effort), а WS-клієнти, які ще тримали з'єднання, отримують fail-loud сигнал замість мовчазного зависання.
+
+Це поведінка типу «cap + LRU eviction», не персистенція. Якщо потрібна історія між рестартами — це окремий TODO (SQLite поверх `JobManager`).
+
 ---
 
 ## Архітектура
@@ -927,12 +1071,12 @@ ws.onmessage = (e) => console.log(JSON.parse(e.data));
 | `app/api/websocket.py` | WS-підписка з replay'ем історії — щоб пізні підписники не пропустили нічого |
 | `app/core/scheduler.py` | топологічне сортування Kahn'а, `CycleDetectedError` (тепер використовується лише як ациклічна перевірка перед стартом пулу) |
 | `app/core/engine.py` | **Async Ready Pool** — 6 паралельних воркерів, `asyncio.Queue` готових вузлів, атомарне поширення «фініш-сигналу» під `state.lock`, м'яка зупинка через `context.should_stop`, dead-edges каскад |
-| `app/core/job_manager.py` | реєстр `Job` + супервайзер `asyncio.create_task`, sentinel `done` після фінішу |
+| `app/core/job_manager.py` | реєстр `Job` + супервайзер `asyncio.create_task`, sentinel `done` після фінішу, TTL із `MAX_JOBS=500` + `task.cancel()` для завислих корутин (див. [TTL у JobManager](#ttl-у-jobmanager-захист-від-витоку-памяті)) |
 | `app/core/log_broker.py` | pub/sub на `asyncio.Queue` per `job_id` |
 | `app/core/context.py` | `ExecutionContext` — потокобезпечна спільна пам'ять (`asyncio.Lock`, `should_stop`, `first_error`) + `resolve_template(template, input_data)` зі snapshot'ами |
 | `app/nodes/base.py` | `BaseNode` ABC + прапорець `is_visual_only` (для нот-стікерів, що ігноруються рушієм) + `NODE_REGISTRY` + декоратори `@input_port`, `@output_port`, `@node_info`, `@static_connection`, `@register_node` + `get_schema()` |
 | `app/nodes/<name>.py` | реалізація конкретного вузла (один файл — один вузол) |
-| `app/schemas/` | Pydantic-моделі: `Workflow`, `Node`, `Edge`, `Job`, `LogEntry`, конфіги вузлів |
+| `app/schemas/` | Pydantic-моделі: `Workflow`, `Node`, `Edge`, `Job`, `LogEntry`, конфіги вузлів. `_check_graph_integrity` робить fail-loud перевірки: унікальність id, валідність посилань ребер, ациклічність та [satisfaction обов'язкових портів](#розумна-валідація-обовязкових-портів) |
 | `app/storage/file_storage.py` | сейв/лоад `Workflow` як JSON, валідація імен (`[A-Za-z0-9_-]{1,64}`) |
 
 ### Контракт виконання
