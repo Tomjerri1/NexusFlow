@@ -360,17 +360,13 @@ function computeLayout(nodes, edges) {
 
 #### Resize-handler пише в `data.ui_metadata`
 
-`NoteNode.handleResizeEnd` тепер мутує `data.ui_metadata`, а не `data.config`:
+`NoteNode.handleResizeEnd` мутує `data.ui_metadata`, а не `data.config`, через `reactFlow.updateNodeData(id, ...)` (точкове оновлення одного вузла без map'а по всьому масиву — див. наступну секцію):
 
 ```jsx
 const patchUiMetadata = (patch) => {
-  reactFlow.setNodes((nodes) =>
-    nodes.map((n) =>
-      n.id === id
-        ? { ...n, data: { ...n.data, ui_metadata: { ...(n.data?.ui_metadata || {}), ...patch } } }
-        : n
-    )
-  );
+  reactFlow.updateNodeData(id, {
+    ui_metadata: { ...(data?.ui_metadata || {}), ...patch },
+  });
 };
 // ...
 const handleResizeEnd = (_evt, params) => {
@@ -379,6 +375,50 @@ const handleResizeEnd = (_evt, params) => {
 ```
 
 Логічний `config` (`html_content`, `title`, `font_*`, `*_color`) лишається undisturbed. Аналогічно `FlowCanvas.onDrop` для нових нот одразу засіває `data.ui_metadata: { width: 240, height: 160 }`, щоб NoteNode/save-цикл читали з єдиного джерела.
+
+#### `updateNodeData` замість `setNodes(nodes.map(...))`
+
+Раніше і `NoteNode`, і `ConfigPanel` оновлювали поля вузла через `reactFlow.setNodes(nodes => nodes.map(n => n.id === id ? {...n, data: {...n.data, ...}} : n))`. На великих графах це проганяло весь масив через map() **на кожне натискання клавіші**, провокуючи зайвий re-render усіх вузлів — навіть тих, у яких нічого не змінилося.
+
+Тепер усі трьома точками входу (`NoteNode.patchConfig`, `NoteNode.patchUiMetadata`, `ConfigPanel.patchNoteConfig` / `updateField` / `updateTriggerRule`) використовується **`reactFlow.updateNodeData(id, partial)`** — точкове оновлення одного вузла. React Flow робить shallow-merge з існуючим `data`, тож вкладений `config` ми merge'имо вручну:
+
+```jsx
+// NoteNode.jsx
+const patchConfig = (patch) => {
+  reactFlow.updateNodeData(id, { config: { ...(data?.config || {}), ...patch } });
+};
+
+// ConfigPanel.jsx — панель сама дістає useReactFlow(), бо рендериться
+// всередині <ReactFlowProvider>. Старий пропс onUpdate{...} прибрано.
+const updateField = (name, value) => {
+  reactFlow.updateNodeData(node.id, { config: { ...config, [name]: value } });
+};
+```
+
+Як наслідок — `App.jsx` більше не тримає `updateNode` callback і не передає `onUpdate` у `ConfigPanel`: top-level state'ом займається тільки delete/load/save, а редагування полів конкретного вузла локалізоване в самому React Flow store через його ж API.
+
+#### `onNodesInitialized` замість сирого пропа `fitView`
+
+Проп `<ReactFlow fitView />` спрацьовує під час першого рендера — ще до того, як dagre встиг обчислити координати, а DOM — виміряти реальні розміри вузлів. У результаті після завантаження сценарію (особливо з note-стікерами або custom-вузлами з динамічним вмістом) канвас часто опинявся «не там»: масштаб брався з нульових bbox, центрування промахувалося.
+
+`FlowCanvas` додатково підписаний на `onNodesInitialized` — React Flow стріляє цією подією **після того, як виміряв розміри ВСІХ вузлів у DOM**:
+
+```jsx
+const reactFlow = useReactFlow();
+
+const onNodesInitialized = useCallback(() => {
+  reactFlow.fitView({ duration: 500, padding: 0.2 });
+}, [reactFlow]);
+
+// ...
+<ReactFlow
+  ...
+  fitView
+  onNodesInitialized={onNodesInitialized}
+/>
+```
+
+Тепер послідовність детермінована: dagre розставив координати → React Flow змонтував і виміряв DOM → `onNodesInitialized` → `fitView` рахує bbox від реальних розмірів. Анімація 500 мс із padding'ом 0.2 робить «прибуття» камери плавним, а не різким стрибком.
 
 ### REST-контракт
 

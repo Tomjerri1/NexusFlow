@@ -26,11 +26,9 @@ export default function App() {
 
   const selectedNode = nodes.find((n) => n.id === selectedId) || null;
 
-  const updateNode = useCallback(
-    (id, patch) =>
-      setNodes((ns) => ns.map((n) => (n.id === id ? { ...n, ...patch } : n))),
-    []
-  );
+  // Редагування полів вузла тепер живе всередині ConfigPanel через
+  // useReactFlow().updateNodeData(...) — без map'а по всьому масиву nodes.
+  // Тут лишилися тільки top-level операції з графом (delete/load/save).
 
   const deleteNode = useCallback((id) => {
     setNodes((ns) => ns.filter((n) => n.id !== id));
@@ -127,7 +125,6 @@ export default function App() {
 
           <ConfigPanel
             node={selectedNode}
-            onUpdate={updateNode}
             onDelete={deleteNode}
             readonly={isReadonly}
           />

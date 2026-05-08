@@ -48,21 +48,15 @@ export default function NoteNode({ id, data, selected }) {
   const width = uiMeta.width ?? config.width ?? 240;
   const height = uiMeta.height ?? config.height ?? 160;
 
-  // Updating data.config via ReactFlow.setNodes is a single source of truth.
+  // Updating data.config via reactFlow.updateNodeData — точкове оновлення
+  // одного вузла без map'а по всьому масиву. Раніше тут жив setNodes(nodes =>
+  // nodes.map(...)) — на великих графах це провокувало re-render усіх вузлів
+  // на кожне натискання клавіші. updateNodeData робить shallow-merge з
+  // існуючим data, тож ми вручну merge'имо лише вкладений config-обʼєкт.
   const patchConfig = (patch) => {
-    reactFlow.setNodes((nodes) =>
-      nodes.map((n) =>
-        n.id === id
-          ? {
-              ...n,
-              data: {
-                ...n.data,
-                config: { ...(n.data?.config || {}), ...patch },
-              },
-            }
-          : n
-      )
-    );
+    reactFlow.updateNodeData(id, {
+      config: { ...(data?.config || {}), ...patch },
+    });
   };
 
   // Те саме, що patchConfig, але мутує `data.ui_metadata` — кишеню для
@@ -70,19 +64,9 @@ export default function NoteNode({ id, data, selected }) {
   // груп тощо). Логічний `config` залишається чистим, а двигун узагалі
   // не заглядає у це поле.
   const patchUiMetadata = (patch) => {
-    reactFlow.setNodes((nodes) =>
-      nodes.map((n) =>
-        n.id === id
-          ? {
-              ...n,
-              data: {
-                ...n.data,
-                ui_metadata: { ...(n.data?.ui_metadata || {}), ...patch },
-              },
-            }
-          : n
-      )
-    );
+    reactFlow.updateNodeData(id, {
+      ui_metadata: { ...(data?.ui_metadata || {}), ...patch },
+    });
   };
 
   const editor = useEditor({

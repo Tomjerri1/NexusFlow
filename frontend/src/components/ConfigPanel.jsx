@@ -1,3 +1,4 @@
+import { useReactFlow } from "@xyflow/react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "../i18n.js";
 import { useNodeSchemas } from "../nodeSchema.js";
@@ -602,9 +603,30 @@ function NoteToolbar({ node, patchConfig, readonly }) {
   );
 }
 
-export default function ConfigPanel({ node, onUpdate, onDelete, readonly }) {
+export default function ConfigPanel({ node, onDelete, readonly }) {
   const { t } = useTranslation();
   const { schemas } = useNodeSchemas();
+  // ConfigPanel рендериться всередині <ReactFlowProvider> в App.jsx, тож
+  // useReactFlow() тут доступний. updateNodeData точково мерджить дані
+  // одного вузла замість того, щоб переганяти весь масив через map() на
+  // кожне натискання клавіші — це принципово для великих графів.
+  const reactFlow = useReactFlow();
+
+  const type = node?.data?.type;
+  const config = node?.data?.config || {};
+  const triggerRule = node?.data?.trigger_rule || "all_success";
+  const schema = type ? schemas[type] : null;
+  const configSchema = schema?.config_schema;
+
+  const properties = useMemo(() => {
+    if (!configSchema?.properties) return [];
+    const required = new Set(configSchema.required || []);
+    return Object.entries(configSchema.properties).map(([name, propSchema]) => ({
+      name,
+      schema: propSchema,
+      required: required.has(name),
+    }));
+  }, [configSchema]);
 
   if (!node) {
     return (
@@ -615,17 +637,11 @@ export default function ConfigPanel({ node, onUpdate, onDelete, readonly }) {
     );
   }
 
-  const type = node.data.type;
-  const config = node.data.config || {};
-  const triggerRule = node.data.trigger_rule || "all_success";
-  const schema = schemas[type];
-  const configSchema = schema?.config_schema;
-
   if (type === "note") {
     const patchNoteConfig = (patch) => {
       if (readonly) return;
-      onUpdate(node.id, {
-        data: { ...node.data, config: { ...config, ...patch } },
+      reactFlow.updateNodeData(node.id, {
+        config: { ...config, ...patch },
       });
     };
     return (
@@ -667,26 +683,17 @@ export default function ConfigPanel({ node, onUpdate, onDelete, readonly }) {
     );
   }
 
-  const properties = useMemo(() => {
-    if (!configSchema?.properties) return [];
-    const required = new Set(configSchema.required || []);
-    return Object.entries(configSchema.properties).map(([name, propSchema]) => ({
-      name,
-      schema: propSchema,
-      required: required.has(name),
-    }));
-  }, [configSchema]);
 
   const updateField = (name, value) => {
     if (readonly) return;
-    onUpdate(node.id, {
-      data: { ...node.data, config: { ...config, [name]: value } },
+    reactFlow.updateNodeData(node.id, {
+      config: { ...config, [name]: value },
     });
   };
 
   const updateTriggerRule = (value) => {
     if (readonly) return;
-    onUpdate(node.id, { data: { ...node.data, trigger_rule: value } });
+    reactFlow.updateNodeData(node.id, { trigger_rule: value });
   };
 
   return (

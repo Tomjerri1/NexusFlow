@@ -31,8 +31,19 @@ export default function FlowCanvas({
 }) {
   const { t } = useTranslation();
   const wrapperRef = useRef(null);
-  const { screenToFlowPosition } = useReactFlow();
+  const reactFlow = useReactFlow();
+  const { screenToFlowPosition } = reactFlow;
   const { schemas } = useNodeSchemas();
+
+  // Викликається після того, як React Flow виміряв реальні розміри ВСІХ
+  // вузлів у DOM. Тільки на цьому етапі fitView знає справжні bbox і може
+  // коректно центрувати/масштабувати граф. Проп `fitView` сам по собі
+  // спрацьовує до dagre-розкладки → в результаті масштаб брався з нульових
+  // розмірів. Хук гарантує: dagre розставив координати → DOM відрендерив
+  // вузли з реальними size'ами → fitView рахує bbox правильно.
+  const onNodesInitialized = useCallback(() => {
+    reactFlow.fitView({ duration: 500, padding: 0.2 });
+  }, [reactFlow]);
 
   // `nexus` — універсальний логічний вузол, `note` — суто візуальний стікер.
   // Бекенд відрізняє їх через прапорець `is_visual_only` у схемі.
@@ -149,6 +160,9 @@ export default function FlowCanvas({
         onEdgesChange={onEdgesChange}
         onConnect={onConnect}
         onSelectionChange={onSelectionChange}
+        onInit={(instance) => {
+          setTimeout(() => instance.fitView({ duration: 500, padding: 0.2 }), 50);
+        }}
         edgesReconnectable={!readonly}
         edgesFocusable={!readonly}
         nodesConnectable={!readonly}
