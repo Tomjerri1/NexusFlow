@@ -16,7 +16,7 @@ import NoteNode from "./NoteNode.jsx";
 
 let idCounter = 1;
 function makeId(type) {
-  // Короткий читабельний id типу `mt_3`, `cnd_1` тощо.
+  // A short, human-readable ID such as `mt_3`, `cnd_1`, etc.
   const prefix = type.split("_").map((p) => p[0]).join("");
   return `${prefix}_${idCounter++}`;
 }
@@ -35,25 +35,25 @@ export default function FlowCanvas({
   const { screenToFlowPosition } = reactFlow;
   const { schemas } = useNodeSchemas();
 
-  // Викликається після того, як React Flow виміряв реальні розміри ВСІХ
-  // вузлів у DOM. Тільки на цьому етапі fitView знає справжні bbox і може
-  // коректно центрувати/масштабувати граф. Проп `fitView` сам по собі
-  // спрацьовує до dagre-розкладки → в результаті масштаб брався з нульових
-  // розмірів. Хук гарантує: dagre розставив координати → DOM відрендерив
-  // вузли з реальними size'ами → fitView рахує bbox правильно.
+  // Called after React Flow has measured the actual dimensions of ALL
+  // nodes in the DOM. Only at this stage does `fitView` know the true bbox and can
+  // correctly center/scale the graph. The `fitView` prop itself
+  // triggers before the dagre layout → as a result, the scale was taken from zero
+  // dimensions. The hook guarantees: dagre has set the coordinates → the DOM has rendered
+  // nodes with actual sizes → fitView calculates the bbox correctly.
   const onNodesInitialized = useCallback(() => {
     reactFlow.fitView({ duration: 500, padding: 0.2 });
   }, [reactFlow]);
 
-  // `nexus` — універсальний логічний вузол, `note` — суто візуальний стікер.
-  // Бекенд відрізняє їх через прапорець `is_visual_only` у схемі.
+  // `nexus` is a universal logical node, while `note` is a purely visual sticker.
+  // The backend distinguishes between them using the `is_visual_only` flag in the schema.
   const nodeTypes = useMemo(
     () => ({ nexus: CustomNode, note: NoteNode }),
     []
   );
 
-  // Воркфлоу повністю readonly: або встановлено явний прапорець на самому
-  // воркфлоу, або є хоча б один вузол з декларативним static-зв'язком.
+  // The workflow is completely read-only: either an explicit flag is set on the
+  // workflow itself, or there is at least one node with a declarative static link.
   const readonly = useMemo(() => {
     if (workflowReadonly) return true;
     const types = nodes.map((n) => n.data?.type).filter(Boolean);
@@ -63,7 +63,7 @@ export default function FlowCanvas({
   const onNodesChange = useCallback(
     (changes) => {
       if (readonly) {
-        // Лише selection — позиція/видалення/розмір блокуються.
+        // Only selection—position, deletion, and size are locked.
         const safe = changes.filter((c) => c.type === "select");
         setNodes((ns) => applyNodeChanges(safe, ns));
         return;
@@ -111,8 +111,8 @@ export default function FlowCanvas({
         y: event.clientY,
       });
       const id = makeId(type);
-      // Візуальний стікер `note` рендериться окремим React Flow type'ом
-      // (без хедера/портів). Усі решта — універсальний `nexus` вузол.
+      // The `note` visual sticker is rendered as a separate React Flow type
+      // (without a header or ports). Everything else is a universal `nexus` node.
       const reactFlowType = type === "note" ? "note" : "nexus";
       const isNote = type === "note";
       const newNode = {
@@ -123,14 +123,14 @@ export default function FlowCanvas({
           type,
           config: structuredClone(DEFAULT_CONFIG[type]),
           trigger_rule: "all_success",
-          // Для note одразу засіваємо UI Metadata Pocket (width/height) —
-          // щоб NoteNode читав розмір із того ж джерела, куди потім писатиме
-          // resize-handler. position/координати ми не дублюємо в ui_metadata
-          // тут — flowToWorkflow зчитає їх із n.position на момент save'у.
+          // For the note, we immediately populate the UI Metadata Pocket (width/height) —
+          // so that NoteNode reads the dimensions from the same source where the
+          // resize-handler will later write them. We do not duplicate the position/coordinates in ui_metadata
+          // here — flowToWorkflow will read them from n.position at the time of saving.
           ui_metadata: isNote ? { width: 240, height: 160 } : {},
         },
-        // Стартовий розмір на рівні React Flow node — щоб NodeResizer мав
-        // bbox, навіть поки в data.ui_metadata ще нічого нема.
+        // Initial size at the React Flow node level — so that NodeResizer has
+        // a bbox, even if there is nothing in data.ui_metadata yet.
         ...(isNote ? { style: { width: 240, height: 160 } } : {}),
       };
       setNodes((ns) => ns.concat(newNode));

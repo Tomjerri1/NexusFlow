@@ -50,17 +50,13 @@ def _wait_terminal(client: TestClient, job_id: str, timeout: float = 5.0) -> dic
         time.sleep(0.05)
     pytest.fail(f"job {job_id} did not finish in {timeout}s; last={last}")
 
-
-# ---------- meta ----------
-
 def test_health(client: TestClient):
     r = client.get("/health")
     assert r.status_code == 200
     assert r.json() == {"status": "ok"}
 
-
 def test_api_docs_endpoints_disabled(client: TestClient):
-    # Frontend (React Flow) — єдиний UI; авто-документація API повністю вимкнена.
+    # Frontend (React Flow) — single UI; API auto-documentation is completely disabled.
     assert client.get("/docs").status_code == 404
     assert client.get("/redoc").status_code == 404
     assert client.get("/openapi.json").status_code == 404
@@ -72,7 +68,7 @@ def test_nodes_schema_endpoint_returns_manifest(client: TestClient):
     body = r.json()
     assert "nodes" in body and isinstance(body["nodes"], list)
     by_type = {n["type_name"]: n for n in body["nodes"]}
-    # Усі типи з NODE_REGISTRY мають з'явитися в схемі.
+    # All types from NODE_REGISTRY must appear in the schema.
     for expected in (
         "manual_trigger",
         "read_file",
@@ -94,16 +90,12 @@ def test_nodes_schema_endpoint_returns_manifest(client: TestClient):
     assert any(p["name"] == "expression" for p in expression["inputs"])
     assert any(p["name"] == "result" for p in expression["outputs"])
 
-
-# ---------- /jobs/run + lifecycle ----------
-
 def test_post_jobs_run_returns_pending_job(client: TestClient):
     r = client.post("/jobs/run", json=INLINE_HELLO)
     assert r.status_code == 202, r.text
     body = r.json()
     assert body["status"] == "pending"
     assert "id" in body and body["workflow_name"] == "hello_inline"
-
 
 def test_full_job_lifecycle_inline(client: TestClient):
     job_id = client.post("/jobs/run", json=INLINE_HELLO).json()["id"]
@@ -114,7 +106,6 @@ def test_full_job_lifecycle_inline(client: TestClient):
     assert "t1" in body["result"] and "l1" in body["result"]
     assert any(e["level"] == "done" for e in body["logs"])
 
-
 def test_run_request_requires_one_of_two_fields(client: TestClient):
     r = client.post("/jobs/run", json={})
     assert r.status_code == 422
@@ -124,18 +115,16 @@ def test_run_request_requires_one_of_two_fields(client: TestClient):
     )
     assert r.status_code == 422
 
-
 def test_cycle_rejected_at_request_validation(client: TestClient):
-    """Цикл у графі тепер ловиться валідатором `Workflow.model_validate`,
-    тож FastAPI відповідає 422 (Pydantic body-validation), а не 400 від
-    runtime-перевірки. Тіло відповіді все одно містить ім'я порушення
-    («cycle») та список вузлів-учасників.
+    """The cycle in the graph is now caught by the `Workflow.model_validate` validator,
+    so FastAPI returns a 422 (Pydantic body validation) instead of a 400 from
+    the runtime check. The response body still contains the violation name
+    (“cycle”) and a list of participating nodes.
     """
     r = client.post("/jobs/run", json=CYCLIC)
     assert r.status_code == 422, r.text
     assert "cycle" in r.text.lower()
     assert "['a', 'b']" in r.text
-
 
 def test_path_traversal_in_write_file_marks_job_failed(client: TestClient):
     payload = {
@@ -157,20 +146,15 @@ def test_path_traversal_in_write_file_marks_job_failed(client: TestClient):
     assert body["status"] == "failed"
     assert "outside sandbox" in (body["error"] or "")
 
-
 def test_get_job_404_for_unknown(client: TestClient):
     r = client.get("/jobs/does-not-exist")
     assert r.status_code == 404
-
 
 def test_list_jobs_returns_recent(client: TestClient):
     client.post("/jobs/run", json=INLINE_HELLO)
     r = client.get("/jobs")
     assert r.status_code == 200
     assert isinstance(r.json(), list)
-
-
-# ---------- workflows CRUD ----------
 
 def test_workflows_crud_round_trip(client: TestClient):
     workflow = {
@@ -192,18 +176,15 @@ def test_workflows_crud_round_trip(client: TestClient):
         client.delete("/workflows/crud_test")
     assert client.get("/workflows/crud_test").status_code == 404
 
-
 def test_get_workflow_invalid_name_returns_400(client: TestClient):
-    # `_safe_path` блокує імена з небезпечними символами; через path-параметр
-    # відправляємо валідне URL-енкодоване ім'я з крапкою.
+    # `_safe_path` blocks names containing dangerous characters; via the path parameter
+    # we send a valid URL-encoded name with a period.
     r = client.get("/workflows/with.dot")
     assert r.status_code == 400
-
 
 def test_delete_unknown_workflow_returns_404(client: TestClient):
     r = client.delete("/workflows/__never_existed__")
     assert r.status_code == 404
-
 
 def test_run_saved_workflow_by_name(client: TestClient):
     workflow = INLINE_HELLO["workflow"] | {"name": "saved_hello"}
@@ -217,13 +198,9 @@ def test_run_saved_workflow_by_name(client: TestClient):
     finally:
         client.delete("/workflows/saved_hello")
 
-
 def test_run_unknown_saved_workflow_returns_404(client: TestClient):
     r = client.post("/jobs/run", json={"workflow_name": "__nope__"})
     assert r.status_code == 404
-
-
-# ---------- WebSocket ----------
 
 def test_websocket_streams_full_history_until_done(client: TestClient):
     job_id = client.post("/jobs/run", json=INLINE_HELLO).json()["id"]
@@ -238,9 +215,8 @@ def test_websocket_streams_full_history_until_done(client: TestClient):
     assert received[-1]["level"] == "done"
     assert any(e["level"] == "info" for e in received)
 
-
 def test_websocket_replays_history_for_completed_job(client: TestClient):
-    """WS, підключений ПІСЛЯ завершення job, має побачити всі логи (replay)."""
+    """The WS, connected AFTER the job has finished, should see all the logs (replay)."""
     job_id = client.post("/jobs/run", json=INLINE_HELLO).json()["id"]
     _wait_terminal(client, job_id)
     received: list[dict] = []
@@ -251,4 +227,4 @@ def test_websocket_replays_history_for_completed_job(client: TestClient):
             if entry["level"] == "done":
                 break
     assert received[-1]["level"] == "done"
-    assert len(received) >= 3  # хоча б start, exec, done
+    assert len(received) >= 3  # at least start, exec, done

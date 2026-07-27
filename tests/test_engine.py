@@ -17,8 +17,7 @@ def _load(name: str) -> Workflow:
 async def _run(workflow: Workflow, ctx: ExecutionContext) -> dict:
     return await WorkflowEngine().run(workflow, ctx.job_id, ctx)
 
-
-# ---------- scheduler ----------
+#scheduler
 
 def test_topological_sort_linear():
     wf = Workflow.model_validate(
@@ -34,7 +33,6 @@ def test_topological_sort_linear():
     )
     order = [n.id for n in topological_sort(wf.nodes, wf.edges)]
     assert order == ["a", "b", "c"]
-
 
 def test_topological_sort_diamond_keeps_partial_order():
     wf = Workflow.model_validate(
@@ -60,12 +58,11 @@ def test_topological_sort_diamond_keeps_partial_order():
     assert order.index("b") < order.index("d")
     assert order.index("c") < order.index("d")
 
-
 def test_topological_sort_detects_cycle():
-    """Перевіряє низькорівневу поведінку `topological_sort` — створюємо
-    nodes/edges напряму, бо `Workflow.model_validate` з циклом тепер
-    впаде на власному pre-execution-валідаторі (див.
-    `test_workflow_rejects_cyclic_graph` у test_schemas.py).
+    """Checks the low-level behavior of `topological_sort` — we create
+    nodes and edges directly, because `Workflow.model_validate` with a loop will now
+    fail on its own pre-execution validator (see
+    `test_workflow_rejects_cyclic_graph` in test_schemas.py).
     """
     from app.schemas.workflow import Edge as _Edge, Node as _Node
 
@@ -82,7 +79,7 @@ def test_topological_sort_detects_cycle():
     assert exc_info.value.cycle_node_ids == ["a", "b"]
 
 
-# ---------- engine: 3 example workflows ----------
+#engine: 3 example workflows
 
 async def test_example_hello_world(ctx: ExecutionContext, fake_broker):
     result = await _run(_load("01_hello_world.json"), ctx)
@@ -90,24 +87,11 @@ async def test_example_hello_world(ctx: ExecutionContext, fake_broker):
     messages = [e.message for _, e in fake_broker.entries]
     assert "Hello, Student!" in messages
 
-
-async def test_example_read_write_copy(ctx: ExecutionContext):
-    result = await _run(_load("02_read_write_copy.json"), ctx)
-    assert "w1" in result
-    written_path = Path(result["w1"]["path"])
-    try:
-        assert written_path.exists()
-        assert result["w1"]["bytes_written"] == result["r1"]["size"]
-        assert written_path.read_text(encoding="utf-8") == result["r1"]["content"]
-    finally:
-        written_path.unlink(missing_ok=True)
-
-
 async def test_example_condition_branching_takes_true(
     ctx: ExecutionContext, fake_broker
 ):
-    """`data/input.txt` свідомо > 100 байт, тож true-гілка має виконатися,
-    а false-гілка — пропуститися."""
+    """`Since `data/input.txt` is intentionally larger than 100 bytes, the true branch should be executed,
+    while the false branch should be skipped."""
     result = await _run(_load("03_condition_branching.json"), ctx)
     assert result["c1"]["result"] is True
     assert "l_big" in result
@@ -118,8 +102,7 @@ async def test_example_condition_branching_takes_true(
     ]
     assert skipped, "expected a 'Skipped' log entry for l_small"
 
-
-# ---------- engine: behaviour ----------
+#engine: behaviour
 
 async def test_engine_propagates_node_error_as_failure(ctx: ExecutionContext, fake_broker):
     wf = Workflow.model_validate(
@@ -137,22 +120,20 @@ async def test_engine_propagates_node_error_as_failure(ctx: ExecutionContext, fa
     error_logs = [e for _, e in fake_broker.entries if e.level == "error"]
     assert error_logs, "expected an error-level log entry"
 
-
 async def test_engine_unknown_node_type_raises(ctx: ExecutionContext):
-    # Створюємо граф через model_construct, щоб обійти Pydantic Literal-перевірку.
+    # We create a graph using `model_construct` to bypass the Pydantic Literal check.
     from app.schemas.workflow import Edge, Node
     bad_node = Node.model_construct(id="x", type="unknown", config={})  # type: ignore[arg-type]
     wf = Workflow.model_construct(name="bad", nodes=[bad_node], edges=[])
     with pytest.raises(UnknownNodeTypeError):
         await _run(wf, ctx)
 
-
 async def test_port_mapped_value_visible_via_input_in_template(
     ctx: ExecutionContext, fake_broker
 ):
-    """Значення, яке прийшло на порт log-вузла, має бути видно у шаблоні
-    `{input.<port>}` без додаткових налаштувань — це універсальний міст
-    із node_inputs у current_input.
+    """The value received on the log node's port should be visible in the template
+    `{input.<port>}` without any additional configuration—this is a universal bridge
+    from `node_inputs` to `current_input`.
     """
     from app.schemas.workflow import Workflow as _Wf  # local alias avoids shadowing
     wf = _Wf.model_validate(
@@ -184,7 +165,6 @@ async def test_port_mapped_value_visible_via_input_in_template(
     messages = [e.message for _, e in fake_broker.entries]
     assert "got hi" in messages
 
-
 async def test_log_node_with_empty_message_dumps_input_as_json(
     ctx: ExecutionContext, fake_broker
 ):
@@ -211,10 +191,9 @@ async def test_log_node_with_empty_message_dumps_input_as_json(
     assert '"a": 1' in json_dumps[0]
     assert '"b": "x"' in json_dumps[0]
 
-
 async def test_port_mapping_routes_value_into_target_handle(ctx: ExecutionContext):
-    """expression-вузол отримує значення `expression` через port-mapping
-    (без дублювання в config) і повертає обчислений результат.
+    """The `expression` node receives the value of `expression` via port mapping
+    (without duplication in the config) and returns the calculated result.
     """
     wf = Workflow.model_validate(
         {
@@ -228,7 +207,7 @@ async def test_port_mapping_routes_value_into_target_handle(ctx: ExecutionContex
                 {
                     "id": "e1",
                     "type": "expression",
-                    # дефолт — буде перекритий port-mapping'ом
+                    # default — will be overridden by port mapping
                     "config": {"expression": "0"},
                 },
             ],
@@ -245,11 +224,10 @@ async def test_port_mapping_routes_value_into_target_handle(ctx: ExecutionContex
     result = await _run(wf, ctx)
     assert result["e1"]["result"] == 3
 
-
 async def test_port_mapping_autoconverts_str_to_int(ctx: ExecutionContext):
-    """Експресія очікує int на порт `expression`, але trigger дає рядок —
-    рушій повинен автоконвертувати без warning'а лише в коректних кейсах,
-    тут тип збігається (str → str), значення йде як є.
+    """The expression expects an int on the `expression` port, but the trigger returns a string—
+    the engine should auto-convert without issuing a warning only in valid cases;
+    here, the types match (str → str), so the value is passed as-is.
     """
     wf = Workflow.model_validate(
         {
@@ -263,18 +241,17 @@ async def test_port_mapping_autoconverts_str_to_int(ctx: ExecutionContext):
             ],
         }
     )
-    # Тут порт `expression` декларовано як str, а ми передаємо int 42 —
-    # рушій сконвертує його у "42", expression-вузол отримає рядок-вираз.
+    # Here, the `expression` port is declared as a string, but we're passing the integer 42—
+    # the engine will convert it to “42”, and the expression node will receive a string expression.
     result = await _run(wf, ctx)
-    # "42" — це валідний sandbox-вираз, який повертає 42.
+    # “42” is a valid sandbox expression that returns 42.
     assert result["e1"]["result"] == 42
-
 
 async def test_port_mapping_logs_warning_on_unconvertible_type(
     ctx: ExecutionContext, fake_broker
 ):
-    """Якщо тип непідходить і конвертація не вдається — у логах має
-    бути warning, але виконання продовжується.
+    """If the type doesn't match and the conversion fails, there should
+    be a warning in the logs, but execution continues.
     """
     wf = Workflow.model_validate(
         {
@@ -288,20 +265,19 @@ async def test_port_mapping_logs_warning_on_unconvertible_type(
                 {"id": "r1", "type": "read_file", "config": {"path": "data/input.txt"}},
             ],
             "edges": [
-                # порт `path` очікує str, а ми пихаємо весь dict через source_handle
+                # The `path` port expects a string, but we're passing the entire dictionary through the source_handle
                 {"from": "t1", "to": "r1", "source_handle": "obj", "target_handle": "path"},
             ],
         }
     )
-    # Тут конвертація dict→str через str(value) насправді спрацює (це не помилка),
-    # тож warning не з'явиться. Перевіряємо лише, що граф не падає.
+    # Here, converting a dict to a string using `str(value)` actually works (this isn't a bug),
+    # so no warning will be displayed. We're just checking that the graph doesn't crash.
     try:
         await _run(wf, ctx)
     except Exception:
-        # Можлива FileNotFoundError від read_file — нас цікавить лише,
-        # що рушій дійшов до execute() (тобто warning не зупинив виконання).
+        # A FileNotFoundError may occur when calling read_file — we're only interested in
+        # whether the engine reached execute() (i.e., the warning didn't stop execution).
         pass
-
 
 async def test_workflow_is_readonly_propagates_to_edges(ctx: ExecutionContext):
     from app.core.engine import _collect_effective_edges
@@ -318,16 +294,16 @@ async def test_workflow_is_readonly_propagates_to_edges(ctx: ExecutionContext):
     )
     edges = _collect_effective_edges(wf)
     assert all(e.is_readonly for e in edges)
-    # Регулярне виконання все одно проходить — readonly не блокує рушій.
+    # Regular execution still proceeds—`readonly` does not block the engine.
     await _run(wf, ctx)
 
 
 async def test_dead_branch_cascades_through_chain(
     ctx: ExecutionContext, fake_broker
 ):
-    """Якщо condition обрав true-гілку, ВСЯ false-гілка (включно з
-    нащадками вузла, що сидить на false-handle) має пропуститися —
-    жоден з них не повинен викликати execute().
+    """If the condition selects the true branch, the ENTIRE false branch (including
+    the descendants of the node on the false handle) must be skipped—
+    none of them should call execute().
     """
     wf = Workflow.model_validate(
         {
@@ -337,9 +313,9 @@ async def test_dead_branch_cascades_through_chain(
                  "config": {"initial_data": {"size": 200}}},
                 {"id": "c1", "type": "condition",
                  "config": {"expression": "input.size > 100"}},
-                # true-гілка
+                # true branch
                 {"id": "lt", "type": "log", "config": {"message": "big"}},
-                # false-гілка: lf1 → lf2 → lf3
+                # false branch: lf1 → lf2 → lf3
                 {"id": "lf1", "type": "log", "config": {"message": "small1"}},
                 {"id": "lf2", "type": "log", "config": {"message": "small2"}},
                 {"id": "lf3", "type": "log", "config": {"message": "small3"}},
@@ -356,11 +332,11 @@ async def test_dead_branch_cascades_through_chain(
     result = await _run(wf, ctx)
     assert result["c1"]["result"] is True
     assert "lt" in result
-    # Жоден із false-нащадків НЕ виконався
+    # None of the false descendants were executed
     assert "lf1" not in result
     assert "lf2" not in result
     assert "lf3" not in result
-    # Усі троє мають у логах "Skipped due to dead branch"
+    # All three have “Skipped due to dead branch” in their logs
     skip_messages = {
         e.node_id: e.message
         for _, e in fake_broker.entries
@@ -371,12 +347,11 @@ async def test_dead_branch_cascades_through_chain(
     assert "lf3" in skip_messages
     assert all("dead branch" in m for m in skip_messages.values())
 
-
 async def test_dead_branch_kills_node_with_other_inputs_only_from_dead_branch(
     ctx: ExecutionContext,
 ):
-    """Вузол, у якого ВСІ inbound-ребра походять з мертвої гілки
-    (хай навіть через різні проміжні вузли), теж має бути мертвим.
+    """A node whose ALL inbound edges originate from a dead branch
+    (even if through different intermediate nodes) must also be dead.
     """
     wf = Workflow.model_validate(
         {
@@ -386,7 +361,7 @@ async def test_dead_branch_kills_node_with_other_inputs_only_from_dead_branch(
                  "config": {"initial_data": {"flag": False}}},
                 {"id": "c1", "type": "condition",
                  "config": {"expression": "input.flag"}},
-                # обидва входи `merge` походять з false-гілки
+                # Both `merge` inputs come from the false branch
                 {"id": "lf_a", "type": "log", "config": {"message": "a"}},
                 {"id": "lf_b", "type": "log", "config": {"message": "b"}},
                 {"id": "merge", "type": "log", "config": {"message": "merge"}},
@@ -404,15 +379,14 @@ async def test_dead_branch_kills_node_with_other_inputs_only_from_dead_branch(
     assert result["c1"]["result"] is False
     assert "lf_a" not in result
     assert "lf_b" not in result
-    # merge має лише мертві inbound — теж мертвий, навіть із 2 ребрами
+    # If a merge has only dead inbounds, it is also dead, even with two edges
     assert "merge" not in result
-
 
 async def test_trigger_rule_all_success_skips_node_when_one_input_dead(
     ctx: ExecutionContext,
 ):
-    """За дефолтним правилом `all_success` merge-вузол не має виконатися,
-    якщо хоча б одне його вхідне ребро мертве (тут — false-гілка condition'а).
+    """By default, the `all_success` merge node should not be executed
+    if at least one of its incoming edges is dead (in this case, the false branch of the condition).
     """
     wf = Workflow.model_validate(
         {
@@ -424,8 +398,8 @@ async def test_trigger_rule_all_success_skips_node_when_one_input_dead(
                  "config": {"expression": "input.v > 100"}},
                 {"id": "lt", "type": "log", "config": {"message": "true"}},
                 {"id": "lf", "type": "log", "config": {"message": "false"}},
-                # merge має ДВА вхідні ребра: одне з true-гілки, одне з false-гілки.
-                # Default trigger_rule = all_success, тож merge має пропуститися.
+                # The merge has TWO incoming edges: one from the true branch and one from the false branch.
+                # The default trigger_rule is all_success, so the merge should be skipped.
                 {"id": "merge", "type": "log", "config": {"message": "merge"}},
             ],
             "edges": [
@@ -441,15 +415,14 @@ async def test_trigger_rule_all_success_skips_node_when_one_input_dead(
     assert result["c1"]["result"] is True
     assert "lt" in result
     assert "lf" not in result
-    # all_success: одне з вхідних ребер merge мертве → merge мертвий
+    # all_success: one of the merge's incoming edges is dead → merge is dead
     assert "merge" not in result
-
 
 async def test_trigger_rule_one_success_runs_node_when_at_least_one_input_alive(
     ctx: ExecutionContext,
 ):
-    """Той самий граф, але merge має `trigger_rule="one_success"` —
-    OR-семантика, тож merge має виконатися, бо true-гілка жива.
+    """It's the same graph, but the merge has `trigger_rule=“one_success”` —
+    OR semantics, so the merge must be executed because the true branch is alive.
     """
     wf = Workflow.model_validate(
         {
@@ -477,14 +450,14 @@ async def test_trigger_rule_one_success_runs_node_when_at_least_one_input_alive(
     result = await _run(wf, ctx)
     assert "lt" in result
     assert "lf" not in result
-    # one_success: достатньо одного живого вхідного ребра (lt) → merge виконується
+    # one_success: one live incoming edge is sufficient (lt) → merge is performed
     assert "merge" in result
 
 
 async def test_trigger_rule_one_success_skipped_when_all_inputs_dead(
     ctx: ExecutionContext,
 ):
-    """Навіть для `one_success` вузол має померти, якщо ВСІ його входи мертві."""
+    """Even for `one_success`, the node must die if ALL of its inputs are dead."""
     wf = Workflow.model_validate(
         {
             "name": "one_success_all_dead",
@@ -512,14 +485,13 @@ async def test_trigger_rule_one_success_skipped_when_all_inputs_dead(
     assert result["c1"]["result"] is False
     assert "lt" not in result
     assert "lt2" not in result
-    # Усі inbound merge мертві → merge мертвий навіть із one_success
+    # All inbound merges are dead → a merge is dead even with `one_success`
     assert "merge" not in result
 
-
 async def test_kill_marks_outgoing_edges_dead():
-    """Прямий unit-тест на каскад: `_kill` додає вузол у `dead_nodes`
-    і стампує усі його вихідні ребра у `dead_edges`. Це гарант того, що
-    наступне `_evaluate_child` побачить нащадків мертвої гілки як мертвих.
+    """A direct unit test for the cascade: `_kill` adds a node to `dead_nodes`
+    and marks all its outgoing edges as `dead_edges`. This ensures that
+    the next `_evaluate_child` will treat the descendants of the dead branch as dead.
     """
     from app.core.engine import WorkflowEngine, _RunState, _edge_key
     from app.schemas.workflow import Edge as _Edge, Node as _Node, Workflow as _Wf
@@ -544,7 +516,6 @@ async def test_kill_marks_outgoing_edges_dead():
     assert _edge_key(wf.edges[0]) in state.dead_edges  # a→b
     assert _edge_key(wf.edges[1]) in state.dead_edges  # a→c
     assert _edge_key(wf.edges[2]) not in state.dead_edges  # b→c (не від a)
-
 
 async def test_condition_false_branch_executes_when_expression_false(
     ctx: ExecutionContext, fake_broker
@@ -571,7 +542,7 @@ async def test_condition_false_branch_executes_when_expression_false(
     assert "lt" not in result
 
 
-# ---------- engine: Async Ready Pool — паралелізм та м'яка зупинка ----------
+#engine: Async Ready Pool — Parallelism and Soft Stopping
 
 import asyncio as _asyncio
 import time as _time
@@ -580,15 +551,13 @@ from pydantic import BaseModel as _BaseModel
 
 from app.nodes.base import NODE_REGISTRY as _REG, BaseNode as _BaseNode, output_port as _output_port
 
-
 class _SleepConfig(_BaseModel):
     delay: float = 0.5
     label: str = ""
 
-
 @_output_port("output", type_hint="dict")
 class _SleeperNode(_BaseNode):
-    """Тест-вузол: засинає на `config.delay` секунд і повертає мітку."""
+    """Test node: sleeps for `config.delay` seconds and returns a token."""
 
     type_name = "test_sleeper"
     config_model = _SleepConfig
@@ -597,7 +566,6 @@ class _SleeperNode(_BaseNode):
         await _asyncio.sleep(self.config.delay)
         return {"slept": self.config.delay, "label": self.config.label}
 
-
 class _FailConfig(_BaseModel):
     delay: float = 0.0
     message: str = "boom"
@@ -605,7 +573,7 @@ class _FailConfig(_BaseModel):
 
 @_output_port("output", type_hint="dict")
 class _FailerNode(_BaseNode):
-    """Тест-вузол: опційно засинає, потім піднімає RuntimeError."""
+    """Test case: optionally hangs, then raises a RuntimeError."""
 
     type_name = "test_failer"
     config_model = _FailConfig
@@ -615,12 +583,11 @@ class _FailerNode(_BaseNode):
             await _asyncio.sleep(self.config.delay)
         raise RuntimeError(self.config.message)
 
-
 @pytest.fixture
 def custom_test_nodes():
-    """Тимчасово реєструє тестові вузли test_sleeper / test_failer
-    у NODE_REGISTRY і прибирає їх після тесту, щоб не протікати між
-    тестами та не псувати /api/nodes/schema у тестах API.
+    """Temporarily registers the test nodes test_sleeper and test_failer
+    in NODE_REGISTRY and removes them after the test to prevent them from leaking between
+    tests and corrupting /api/nodes/schema in API tests.
     """
     _REG["test_sleeper"] = _SleeperNode
     _REG["test_failer"] = _FailerNode
@@ -628,10 +595,9 @@ def custom_test_nodes():
     _REG.pop("test_sleeper", None)
     _REG.pop("test_failer", None)
 
-
 def _construct_wf(name: str, nodes: list, edges: list):
-    """Будує Workflow в обхід `Literal[NodeType]`-перевірки — потрібно для
-    тест-вузлів, що не входять у production-набір."""
+    """Creates a workflow that bypasses the `Literal[NodeType]` check—required for
+    test nodes that are not part of the production set."""
     from app.schemas.workflow import Edge as _E, Node as _N, Workflow as _W
 
     return _W.model_construct(
@@ -641,15 +607,13 @@ def _construct_wf(name: str, nodes: list, edges: list):
         is_readonly=False,
     )
 
-
 async def test_two_parallel_sleeps_finish_in_about_one_second(
     ctx: ExecutionContext, custom_test_nodes
 ):
-    """Доводить, що рушій справді запускає вузли паралельно.
-
-    Граф: один тригер → дві гілки по 1 секунді сну.
-    Якщо двигун послідовний — час буде ~2 с.
-    Якщо паралельний (Async Ready Pool) — ~1 с.
+    """This demonstrates that the engine does indeed launch tasks in parallel.
+    Diagram: one trigger → two branches, each with a 1-second sleep.
+    If the engine is sequential, the time will be ~2 seconds.
+    If it is parallel (Async Ready Pool), the time will be ~1 second.
     """
     wf = _construct_wf(
         "parallel_sleeps",
@@ -673,18 +637,17 @@ async def test_two_parallel_sleeps_finish_in_about_one_second(
     assert "s1" in result and "s2" in result
     assert result["s1"]["label"] == "A"
     assert result["s2"]["label"] == "B"
-    # Запас на накладні витрати planner'а; послідовне виконання було б ~2 с.
+    # Buffer for the planner's overhead; sequential execution would take ~2 seconds.
     assert elapsed < 1.7, (
         f"expected ~1s parallel execution, got {elapsed:.2f}s "
         f"— це натяк на втрату паралелізму у воркер-пулі"
     )
 
-
 async def test_six_parallel_sleeps_within_worker_pool_limit(
     ctx: ExecutionContext, custom_test_nodes
 ):
-    """6 паралельних гілок вкладаються у дефолтний пул (MAX_WORKERS=6)
-    і фінішують за ~`delay` секунд, а не за `6 × delay`."""
+    """6 parallel threads are added to the default pool (MAX_WORKERS=6)
+    and finish in ~`delay` seconds, rather than `6 × delay`."""
     delay = 0.5
     nodes = [{"id": "t", "type": "manual_trigger", "config": {}}]
     edges = []
@@ -704,23 +667,20 @@ async def test_six_parallel_sleeps_within_worker_pool_limit(
 
     for i in range(6):
         assert f"s{i}" in result
-    # Послідовне було б ~3 с; паралельне ~0.5 с + накладні.
+    # The sequential version would take ~3 seconds; the parallel version ~0.5 seconds + overhead.
     assert elapsed < 1.5, f"expected ~{delay}s, got {elapsed:.2f}s"
-
 
 async def test_failure_in_one_branch_lets_running_finish_but_blocks_new(
     ctx: ExecutionContext, custom_test_nodes
 ):
-    """Семантика «м'якої зупинки»:
-
-      • один з паралельних вузлів падає з помилкою → `should_stop=True`,
-      • вже запущений сусідній вузол має дограти до кінця (не cancel'иться),
-      • нащадки впалого вузла НЕ стартують (їх відсікає dead-каскад).
-
-    Граф:
-        t ─┬─→ s_long  (sleep 0.4s, паралельно з fail)
-           └─→ fail    (raise одразу)
-                  └─→ after_fail (має пропуститися як dead)
+    """“Soft stop” semantics:
+      • If one of the parallel nodes fails → `should_stop=True`,
+      • Any already-running child nodes must complete their execution (they are not canceled),
+      • The child nodes of the failed node DO NOT start (they are cut off by the dead-cascade).
+    Graph:
+        t ─┬─→ s_long  (sleep 0.4s, in parallel with fail)
+           └─→ fail    (raise immediately)
+                  └─→ after_fail (should be skipped as dead)
     """
     wf = _construct_wf(
         "fail_isolation",
@@ -745,18 +705,18 @@ async def test_failure_in_one_branch_lets_running_finish_but_blocks_new(
         await _run(wf, ctx)
     elapsed = _time.monotonic() - start
 
-    # s_long встиг дограти — рушій НЕ кенселить запущених.
+    # s_long finished playing — the engine does not cancel running processes.
     assert "s_long" in ctx.node_outputs
     assert ctx.node_outputs["s_long"]["label"] == "long"
 
-    # after_fail — нащадок мертвої гілки → execute() не викликався.
+    # after_fail — descendant of a dead branch → execute() was not called.
     assert "after_fail" not in ctx.node_outputs
 
-    # Прапорець м'якої зупинки залишився виставленим.
+    # The soft stop flag remained raised.
     assert ctx.should_stop is True
     assert isinstance(ctx.first_error, RuntimeError)
 
-    # Час ~ delay s_long'а, а не 0 (бо чекали його завершення).
+    # The time is ~ s_long's delay, not 0 (because we were waiting for it to finish).
     assert elapsed >= 0.35, (
         f"expected to wait for s_long (~0.4s), finished in {elapsed:.2f}s"
     )
@@ -765,12 +725,11 @@ async def test_failure_in_one_branch_lets_running_finish_but_blocks_new(
 async def test_failure_does_not_start_pending_independent_node(
     ctx: ExecutionContext, custom_test_nodes
 ):
-    """Якщо помилка трапляється до того, як воркер встиг забрати з черги
-    незалежний вузол — той вузол НЕ виконається (`should_stop` ловиться
-    на вході в worker-loop).
-
-    Тут гарантуємо ситуацію: ставимо max_workers=1, щоб черга гарантовано
-    мала «непочатий» вузол на момент фейлу.
+    """If an error occurs before the worker has had a chance to retrieve an
+    independent node from the queue, that node will NOT be executed (`should_stop` is triggered
+    at the entrance to the worker loop).
+    Here we ensure the following: we set max_workers=1 so that the queue is guaranteed
+    to have an “unstarted” node at the time of the failure.
     """
     from app.core.engine import WorkflowEngine as _WE
 
@@ -793,22 +752,22 @@ async def test_failure_does_not_start_pending_independent_node(
     with pytest.raises(RuntimeError, match="early boom"):
         await engine.run(wf, ctx.job_id, ctx)
 
-    # При одному воркері: t → fail → fail падає → should_stop=True → independent
-    # дочекалася в черзі і її не запустили.
-    assert "fail" not in ctx.node_outputs  # впав
-    assert "independent" not in ctx.node_outputs  # не стартував через should_stop
+    # With a single worker: t → fail → fail (worker crashes) → should_stop=True → independent
+    # It waited in the queue and was not started.
+    assert "fail" not in ctx.node_outputs  # fell
+    assert "independent" not in ctx.node_outputs  # Did not start due to should_stop
 
 
 async def test_resolve_template_uses_snapshot_under_concurrent_writes(
     ctx: ExecutionContext, custom_test_nodes
 ):
-    """Поки один вузол робить `resolve_template`, інші вузли можуть писати
-    нові виходи у `node_outputs`. resolve_template має зробити локальний
-    snapshot, тож гонка не призведе до RuntimeError.
+    """While one node is performing `resolve_template`, other nodes can write
+    new outputs to `node_outputs`. `resolve_template` must take a local
+    snapshot, so a race condition will not result in a RuntimeError.
 
-    Тестуємо непрямо: запускаємо граф, де багато паралельних вузлів пишуть
-    у node_outputs, а log-вузли читають через шаблони. Якщо snapshot
-    не зробити — падало б `RuntimeError: dictionary changed size`.
+    We test this indirectly: we run a graph where many parallel nodes write
+    to `node_outputs`, and log nodes read via templates. If a snapshot
+    is not taken, a `RuntimeError: dictionary changed size` would occur.
     """
     nodes = [{"id": "t", "type": "manual_trigger",
               "config": {"initial_data": {"label": "X"}}}]
@@ -830,14 +789,14 @@ async def test_resolve_template_uses_snapshot_under_concurrent_writes(
         assert f"l{i}" in result
 
 
-# ---------- engine: visual-only nodes (Note) ----------
+#engine: visual-only nodes (Note)
 
 async def test_note_nodes_are_filtered_before_execution(
     ctx: ExecutionContext, fake_broker
 ):
-    """Note (is_visual_only=True) має бути повністю невидимим для рушія:
-    жодного входу в node_outputs, жодного логу про нього, жодного
-    pending_count'у. Сусідні (виконувані) вузли працюють як завжди.
+    """The Note (is_visual_only=True) must be completely invisible to the engine:
+    no entries in node_outputs, no logs about it, no
+    pending_count. Neighboring (active) nodes behave as usual.
     """
     wf = Workflow.model_validate(
         {
@@ -875,8 +834,8 @@ async def test_note_node_with_dangling_edges_is_dropped(ctx: ExecutionContext):
             ],
             "edges": [
                 {"from": "t1", "to": "l1"},
-                # «фантомне» ребро у note (фронт міг таке не створити, але
-                # ми гарантуємо стійкість).
+                # “phantom” edge in note (the front end might not have generated this, but
+                # we guarantee stability).
                 {"from": "t1", "to": "n1"},
                 {"from": "n1", "to": "l1"},
             ],

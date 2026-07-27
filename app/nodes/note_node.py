@@ -1,13 +1,12 @@
-"""Note (Примітка) — суто візуальний вузол-стікер.
-
-Контракт:
-  • `is_visual_only = True`. Рушій (`WorkflowEngine`) ОБОВ'ЯЗКОВО фільтрує
-    такі вузли ще до `topological_sort` і до побудови `_RunState`. Вони
-    не потрапляють у `nodes_by_id`, чергу `queue` та не впливають на
-    `pending_count`. У логах від них не залишається жодного сліду.
-  • `execute(...)` — заглушка, потрібна лише для того, щоб Python дозволив
-    створити екземпляр класу (`@abstractmethod` у `BaseNode`). У штатному
-    flow вона ніколи не викликається.
+"""Note — a purely visual sticker node.
+Contract:
+  • `is_visual_only = True`. The engine (`WorkflowEngine`) MUST filter
+    such nodes before `topological_sort` and before constructing `_RunState`. They
+    do not appear in `nodes_by_id`, the `queue`, and do not affect
+    `pending_count`. They leave no trace in the logs.
+  • `execute(...)` — a dummy method, needed only so that Python allows
+    the creation of an instance of the class (`@abstractmethod` in `BaseNode`). In the standard
+    flow, it is never called.
 """
 
 from app.core.context import ExecutionContext
@@ -23,7 +22,7 @@ from app.schemas.node_configs import NoteConfig
     description="Visual-only sticky note for documenting the graph. Ignored by the engine.",
 )
 class NoteNode(BaseNode):
-    """Стікер для коментарів на канвасі. У виконанні графа не бере участі."""
+    """A sticker for comments on the canvas. The count is not involved in its creation."""
 
     type_name = "note"
     config_model = NoteConfig

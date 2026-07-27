@@ -77,8 +77,6 @@ function defaultForType(type, schema) {
   }
 }
 
-// --- Окремі рендерери полів --------------------------------------------------
-
 function StringInput({ value, onChange, schema, name, disabled }) {
   const long = isLongText(name, schema);
   const Tag = long ? "textarea" : "input";
@@ -191,8 +189,6 @@ function JsonInput({ value, onChange, disabled }) {
   );
 }
 
-// --- Динамічна панель --------------------------------------------------------
-
 function DynamicField({ name, schema, value, onChange, disabled }) {
   const { t } = useTranslation();
   const type = effectiveType(schema);
@@ -239,7 +235,7 @@ function DynamicField({ name, schema, value, onChange, disabled }) {
       <JsonInput value={safeValue} onChange={onChange} disabled={disabled} />
     );
   } else {
-    // string / null / unknown → текст
+    // string / null / unknown → text
     control = (
       <StringInput
         value={safeValue}
@@ -258,7 +254,7 @@ function DynamicField({ name, schema, value, onChange, disabled }) {
   );
 }
 
-// Список шрифтів і розмірів для тулбара нотатки.
+// List of fonts and sizes for the note toolbar.
 const NOTE_FONT_FAMILIES = [
   { label: "System (За замовчуванням)", value: "system-ui, sans-serif" },
   { label: "Arial", value: "Arial, Helvetica, sans-serif" },
@@ -275,7 +271,7 @@ const NOTE_FONT_FAMILIES = [
 ];
 const NOTE_FONT_SIZES = [ 8, 10, 11, 12, 14, 16, 18, 20, 22, 24, 28, 32, 36, 42, 48, 64, 72 ];
 
-// 5 класичних пар (фон + текст) для швидкого вибору теми стікера.
+// 5 classic combinations (background + text) for quickly choosing a sticker theme.
 const NOTE_PRESETS = [
   { id: "yellow", bg: "#fef3c7", text: "#1f2937", labelKey: "notePresetYellow" },
   { id: "green",  bg: "#d1fae5", text: "#064e3b", labelKey: "notePresetGreen"  },
@@ -368,7 +364,7 @@ function NoteToolbar({ node, patchConfig, readonly }) {
         {t("config.noteHint")}
       </div>
 
-      {/* --- Заголовок стікера --- */}
+      {/* --- Sticker title --- */}
       <label className="mt-3 block text-[11px] text-nexus-muted">
         {t("config.noteTitle")}
       </label>
@@ -381,7 +377,7 @@ function NoteToolbar({ node, patchConfig, readonly }) {
         className={inputClass + " mt-1"}
       />
 
-      {/* --- B / I / U / S через TipTap --- */}
+      {/* --- B / I / U / S via TipTap --- */}
       <div className="mt-3 flex gap-1">
         <button
           type="button"
@@ -425,7 +421,7 @@ function NoteToolbar({ node, patchConfig, readonly }) {
         </button>
       </div>
 
-      {/* --- Вирівнювання тексту --- */}
+      {/* --- Text Alignment --- */}
       <label className="mt-3 block text-[11px] text-nexus-muted">
         {t("config.noteAlign")}
       </label>
@@ -445,7 +441,7 @@ function NoteToolbar({ node, patchConfig, readonly }) {
         ))}
       </div>
 
-      {/* --- Шрифт виділеного тексту --- */}
+      {/* --- Font of the selected text --- */}
       <label className="mt-3 block text-[11px] text-nexus-muted">
         {t("config.noteFontFamily")}
       </label>
@@ -468,25 +464,25 @@ function NoteToolbar({ node, patchConfig, readonly }) {
         ))}
       </select>
 
-      {/* --- Розмір шрифту (TipTap Stepper) --- */}
+      {/* --- Font size (TipTap Stepper) --- */}
       <label className="mt-3 block text-[11px] text-nexus-muted">
         {t("config.noteFontSize")}
       </label>
 
       <div className="mt-1 flex flex-col items-start gap-1">
-        {/* ПОЛЕ ВВОДУ */}
+        {/* INPUT FIELD */}
         <input
           type="number"
           step="0.5"
           disabled={!editorReady}
-          // Показуємо те, що ввів юзер, коли поле у фокусі
+          // Display what the user has entered when the field is in focus
           value={isFontSizeFocused ? localFontSize : activeFontSize}
           onFocus={() => {
             setIsFontSizeFocused(true);
             setLocalFontSize(activeFontSize);
           }}
           onChange={(e) => {
-            // ТІЛЬКИ записуємо цифру в поле. Ніяких змін стилів під час друку!
+            // We only enter a number in the field. No style changes during printing!
             setLocalFontSize(e.target.value);
           }}
           onKeyDown={(e) => {
@@ -505,7 +501,7 @@ function NoteToolbar({ node, patchConfig, readonly }) {
           className="h-7 w-16 rounded border border-nexus-border bg-nexus-bg px-1 text-center text-xs text-nexus-text focus:border-amber-400 focus:outline-none disabled:cursor-not-allowed"
         />
 
-        {/* КНОПКИ + та - */}
+        {/* + and - buttons */}
         <div className="flex gap-1">
           <button
             type="button"
@@ -539,7 +535,7 @@ function NoteToolbar({ node, patchConfig, readonly }) {
         </div>
       </div>
 
-      {/* --- Популярні стилі (теми стікерів) --- */}
+      {/* --- Popular styles (sticker themes) --- */}
       <label className="mt-3 block text-[11px] text-nexus-muted">
         {t("config.notePresets")}
       </label>
@@ -572,7 +568,7 @@ function NoteToolbar({ node, patchConfig, readonly }) {
         })}
       </div>
 
-{/* --- Колір тексту (TipTap: для виділеного або наступних введених символів) --- */}
+{/* --- Text color (TipTap: for selected characters or the next characters entered) --- */}
       <label className="mt-3 block text-[11px] text-nexus-muted">
         {t("config.noteTextColor")}
       </label>
@@ -587,7 +583,7 @@ function NoteToolbar({ node, patchConfig, readonly }) {
         className="mt-1 h-7 w-12 cursor-pointer rounded border border-nexus-border bg-nexus-bg disabled:cursor-not-allowed"
       />
 
-      {/* --- Колір фону стікера (глобально) --- */}
+      {/* --- Sticker background color (global) --- */}
       <label className="mt-3 block text-[11px] text-nexus-muted">
         {t("config.noteBgColor")}
       </label>
@@ -606,10 +602,10 @@ function NoteToolbar({ node, patchConfig, readonly }) {
 export default function ConfigPanel({ node, onDelete, readonly }) {
   const { t } = useTranslation();
   const { schemas } = useNodeSchemas();
-  // ConfigPanel рендериться всередині <ReactFlowProvider> в App.jsx, тож
-  // useReactFlow() тут доступний. updateNodeData точково мерджить дані
-  // одного вузла замість того, щоб переганяти весь масив через map() на
-  // кожне натискання клавіші — це принципово для великих графів.
+  // ConfigPanel is rendered inside <ReactFlowProvider> in App.jsx, so
+  // useReactFlow() is available here. updateNodeData merges data point-by-point
+  // of a single node instead of passing the entire array through map() on
+  // every keystroke—this is essential for large graphs.
   const reactFlow = useReactFlow();
 
   const type = node?.data?.type;

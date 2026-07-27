@@ -19,16 +19,10 @@ export default function App() {
   const [isReadonly, setIsReadonly] = useState(false);
   const [selectedId, setSelectedId] = useState(null);
   const [jobInfo, setJobInfo] = useState(null);
-  // Лічильник, який NodePalette використовує як ключ для re-fetch'а списку
-  // після збереження. Інкрементуємо з RunPanel (через onSaved).
   const [workflowsRefresh, setWorkflowsRefresh] = useState(0);
   const [loadError, setLoadError] = useState(null);
 
   const selectedNode = nodes.find((n) => n.id === selectedId) || null;
-
-  // Редагування полів вузла тепер живе всередині ConfigPanel через
-  // useReactFlow().updateNodeData(...) — без map'а по всьому масиву nodes.
-  // Тут лишилися тільки top-level операції з графом (delete/load/save).
 
   const deleteNode = useCallback((id) => {
     setNodes((ns) => ns.filter((n) => n.id !== id));
@@ -36,7 +30,6 @@ export default function App() {
     setSelectedId((cur) => (cur === id ? null : cur));
   }, []);
 
-  // Завантажує збережений сценарій із бекенду й заміщає поточний канвас.
   const loadWorkflow = useCallback(async (workflowName) => {
     setLoadError(null);
     try {
@@ -57,18 +50,14 @@ export default function App() {
   const onWorkflowSaved = useCallback(() => {
     setWorkflowsRefresh((x) => x + 1);
   }, []);
-
-  // Після завершення WS-стріму витягуємо фінальний Job для відображення статусу.
   const onJobFinished = useCallback(async (jobId) => {
     try {
       const job = await getJob(jobId);
       setJobInfo(job);
     } catch {
-      /* ігноруємо — можливо, сервер уже забув про job */
     }
   }, []);
 
-  // Поллимо статус, поки не пішов done з WS — це покриває кейси, коли WS падає.
   useEffect(() => {
     if (!jobInfo || ["success", "failed"].includes(jobInfo.status)) return;
     const tHandle = setInterval(async () => {

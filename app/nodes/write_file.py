@@ -6,14 +6,13 @@ from app.core.context import ExecutionContext
 from app.nodes.base import BaseNode, input_port, node_info, output_port
 from app.schemas.node_configs import WriteFileConfig
 
-# Sandbox-каталог: дозволяємо запис лише в `<repo>/data/`.
-# Будь-який шлях (відносний чи абсолютний) має після нормалізації
-# опинитися всередині цього каталогу — інакше PathTraversalError.
+# Sandbox directory: writing is allowed only in `<repo>/data/`.
+# Any path (relative or absolute) must, after normalization,
+# end up within this directory—otherwise, a PathTraversalError will occur.
 SANDBOX_DIR = (Path(__file__).resolve().parent.parent.parent / "data").resolve()
 
-
 class PathTraversalError(ValueError):
-    """Шлях виходить за межі дозволеного sandbox-каталогу."""
+    """The path extends beyond the permitted sandbox directory."""
 
 
 def _resolve_safe_path(raw_path: str) -> Path:
@@ -27,7 +26,6 @@ def _resolve_safe_path(raw_path: str) -> Path:
             f"path {raw_path!r} resolves outside sandbox {str(SANDBOX_DIR)!r}"
         ) from exc
     return resolved
-
 
 @node_info(
     display_name="Write File",
@@ -46,7 +44,7 @@ class WriteFileNode(BaseNode):
     config_model = WriteFileConfig
 
     def _port_str(self, context: ExecutionContext, port: str) -> str | None:
-        """Повертає непорожній рядок саме з port-mapping, інакше None."""
+        """Returns a non-empty string containing the port mapping, or None otherwise."""
         port_map = context.node_inputs.get(self.id, {})
         value = port_map.get(port)
         if isinstance(value, str) and value:
@@ -54,10 +52,10 @@ class WriteFileNode(BaseNode):
         return None
 
     async def execute(self, context: ExecutionContext, input_data: dict) -> dict:
-        # Пріоритет джерел даних (як для path, так і для content):
-        #   1. Значення з порту (port-mapping від попереднього вузла).
-        #   2. Поле з config.
-        #   3. Ключ із input_data (legacy merge).
+        # Data source priority (for both path and content):
+        #   1. Value from the port (port mapping from the previous node).
+        #   2. Field from config.
+        #   3. Key from input_data (legacy merge).
         raw_path = (
             self._port_str(context, "path")
             or self.config.path

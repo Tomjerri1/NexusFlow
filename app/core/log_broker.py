@@ -5,14 +5,14 @@ from app.schemas.job import LogEntry
 
 
 class LogBroker:
-    """In-memory pub/sub каналів логів — окрема черга для кожного підписника.
+    """In-memory pub/sub log channels — a separate queue for each subscriber.
 
-    Кожен виклик `subscribe(job_id)` повертає **нову** `asyncio.Queue`,
-    у яку дублюється все, що публікується для `job_id`. Так і JobManager
-    (для збору `job.logs`), і кожен WS-клієнт отримують повний потік
-    незалежно один від одного.
+    Each call to `subscribe(job_id)` returns a **new** `asyncio.Queue`,
+    into which everything published for `job_id` is duplicated. Both the JobManager
+    (for collecting `job.logs`) and each WS client receive the full stream
+    independently of one another.
 
-    Сентинель завершення — `LogEntry` із `level="done"` (див. `JobManager`).
+    The completion sentinel is a `LogEntry` with `level=“done”` (see `JobManager`).
     """
 
     def __init__(self) -> None:

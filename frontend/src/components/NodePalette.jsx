@@ -4,9 +4,9 @@ import { NODE_TYPES, TYPE_BG } from "../nodeTypes.js";
 import { useTranslation } from "../i18n.js";
 import { useNodeSchemas } from "../nodeSchema.js";
 
-// Назви вузлів і категорій ходять через i18n.
-// Якщо ключа в словнику немає — fallback на schema-метадані з бекенду
-// (а якщо й їх нема — на сирий type_name / "general").
+// Node and category names are processed via i18n.
+// If a key is not found in the dictionary, fall back to the schema metadata from the backend
+// (and if that is not available, fall back to the raw type_name or “general”).
 
 function nodeLabel(t, type, schema) {
   const backendName = schema?.info?.display_name;
@@ -29,14 +29,14 @@ export default function NodePalette({ onLoadWorkflow, refreshTick = 0, loadError
   const [savedError, setSavedError] = useState(null);
   const [loadingNames, setLoadingNames] = useState(true);
 
-  // Перетягуємо тип-вузла з палітри на канвас.
+  // Drag the node type from the palette onto the canvas.
   const onDragStart = (event, nodeType) => {
     event.dataTransfer.setData("application/reactflow", nodeType);
     event.dataTransfer.effectAllowed = "move";
   };
 
-  // Список збережених workflow підтягується при mount + при `refreshTick`
-  // (інкрементується після успішного збереження з RunPanel).
+  // The list of saved workflows is fetched on mount and during `refreshTick`
+  // (incremented after successful saving from the RunPanel).
   useEffect(() => {
     let cancelled = false;
     setLoadingNames(true);
@@ -58,7 +58,7 @@ export default function NodePalette({ onLoadWorkflow, refreshTick = 0, loadError
     };
   }, [refreshTick]);
 
-  // Групуємо типи по категоріях (ключ = бекендний `category`).
+  // Group types by category (key = backend `category`).
   const groups = new Map();
   for (const type of NODE_TYPES) {
     const schema = schemas[type];
@@ -100,7 +100,7 @@ export default function NodePalette({ onLoadWorkflow, refreshTick = 0, loadError
         ))}
       </div>
 
-      {/* --- Збережені сценарії ------------------------------------------ */}
+      {/*Saved scripts*/}
       <div className="mt-5 border-t border-nexus-border pt-3">
         <div className="text-[10px] font-semibold uppercase tracking-wide text-nexus-muted">
           {t("palette.savedHeading")}

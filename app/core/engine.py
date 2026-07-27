@@ -43,15 +43,11 @@ from app.schemas.workflow import Edge, Node, Workflow
 
 logger = logging.getLogger(__name__)
 
-
-# Виняток + утиліти типізації портів (без змін у поведінці)
-
-
 class UnknownNodeTypeError(ValueError):
-    """У `NODE_REGISTRY` немає типу, оголошеного у Workflow."""
+    """There is no type declared in `NODE_REGISTRY` in the workflow."""
 
 
-# Ключ «мертвого» ребра - детермінований ідентифікатор, що враховує source_handle.
+# The “dead” rib key is a deterministic identifier that takes the source_handle into account.
 DeadEdgeKey = tuple[str, str, str | None]
 
 
@@ -60,13 +56,8 @@ def _edge_key(edge: Edge) -> DeadEdgeKey:
 
 
 def _is_branching_handle(handle: str | None) -> bool:
-    """`true`/`false` - це гілка condition-вузла, не назва порту даних."""
     return handle in ("true", "false")
 
-
-# Мапінг рядкових імен портів-типів (як їх пише розробник у
-# `@input_port(type_hint="...")`) у реальні Python-типи. Раніше тут була
-# власна машинерія `_python_kind` + `_matches` + ручний `_try_convert`
 TYPE_MAPPING: dict[str, Any] = {
     "int": int,
     "integer": int,
@@ -84,25 +75,24 @@ TYPE_MAPPING: dict[str, Any] = {
     "": Any,
 }
 
-# Lax-конфіг: дозволяє конвертації `int/float → str` («42» → "42"),
-# яких очікують вузли NexusFlow і які раніше робив ручний `str(value)`.
-# Решта lax-перетворень («42»→42, "true"→True, tuple→list тощо)
-# у Pydantic v2 ввімкнена за замовчуванням.
+# Lax-config: enables `int/float → str` conversions (“42” → “42”),
+# which are expected by NexusFlow nodes and were previously handled manually with `str(value)`.
+# Other Lax conversions (“42” → 42, “true” → True, tuple → list, etc.)
 _LAX_CONFIG = ConfigDict(coerce_numbers_to_str=True)
 
 
 def _try_convert(value: Any, expected: str) -> Any:
-    """Спробувати конвертувати `value` у тип, що відповідає рядку `expected`.
+    """Attempt to convert `value` to the type corresponding to the string `expected`.
 
-    Логіка:
-      • беремо реальний Python-тип з `TYPE_MAPPING`,
-      • для `Any` (або невідомого типу) - повертаємо значення без змін,
-      • інакше створюємо `TypeAdapter(target, config=_LAX_CONFIG)` і викликаємо
-        `validate_python(value)` - це і є «офіційна» Pydantic-ова конвертація.
+    Logic:
+      • take the actual Python type from `TYPE_MAPPING`,
+      • for `Any` (or an unknown type) – return the value unchanged,
+      • otherwise create `TypeAdapter(target, config=_LAX_CONFIG)` and call
+        `validate_python(value)`.
 
-    Якщо Pydantic відкидає значення - піднімаємо `TypeError`, щоб блок
-    `except (ValueError, TypeError)` у `_route_inputs` поводився ідентично
-    до старої поведінки: логувати warning і пропускати оригінальне значення.
+    If Pydantic rejects the value, it raises a `TypeError` so that the
+    `except (ValueError, TypeError)` block in `_route_inputs` behaves identically
+    to the old behavior: log a warning and pass the original value.
     """
     target = TYPE_MAPPING.get(expected.lower())
     if target is None or target is Any:
@@ -128,7 +118,7 @@ def _expected_port_type(node_type: str, port_name: str) -> str | None:
 
 
 def _collect_effective_edges(workflow: Workflow) -> list[Edge]:
-    """Об'єднує explicit-ребра з декларативними static_connections вузлів."""
+    """Combines explicit edges with declarative static_connections of nodes."""
     workflow_readonly = bool(getattr(workflow, "is_readonly", False))
 
     edges: list[Edge] = []
@@ -159,16 +149,16 @@ def _collect_effective_edges(workflow: Workflow) -> list[Edge]:
             )
     return edges
 
-# Внутрішній стан запуску
+# Internal startup status
 
 @dataclass
 class _RunState:
-    """Інкапсулює увесь стан одного запуску воркфлоу.
+    """Encapsulates the entire state of a single workflow run.
 
-    Усі мутації полів-словників/множин (`dead_edges`, `dead_nodes`,
-    `scheduled`, `finished`, `pending_count`) відбуваються лише під
-    `lock`. Це гарантує атомарність тріади «зменшити лічильник →
-    переоцінити готовність → додати в чергу», що і є вимогою задачі.
+    All mutations of dictionary/set fields (`dead_edges`, `dead_nodes`,
+    `scheduled`, `finished`, `pending_count`) occur only under
+    `lock`. This guarantees the atomicity of the triad “decrement the counter →
+    re-evaluate readiness → add to the queue,” which is a requirement of the task.
     """
 
     nodes_by_id: dict[str, Node]
@@ -185,11 +175,11 @@ class _RunState:
     dead_nodes: set[str] = field(default_factory=set)
     dead_edges: set[DeadEdgeKey] = field(default_factory=set)
     pending_count: int = 0
-    # Скільки воркерів зараз ВСЕРЕДИНІ `_process_node` (між інкрементом
-    # та `finally`-декрементом). Потрібно для м'якої зупинки: коли
-    # `should_stop=True`, нові вузли не беремо, але вже запущені дограють.
-    # Як тільки `running_count` падає до 0 під should_stop - двигун може
-    # завершитися, навіть якщо в черзі лишилися «не-стартовані» вузли.
+    # The number of workers currently inside `_process_node` (between the increment
+    # and the `finally` decrement). This is needed for a soft stop: when
+    # `should_stop=True`, we do not accept new nodes, but those already running will finish.
+    # As soon as `running_count` drops to 0 under `should_stop`, the engine can
+    # terminate, even if there are still “unstarted” nodes left in the queue.
     running_count: int = 0
 
     @classmethod
@@ -212,18 +202,18 @@ class _RunState:
 class WorkflowEngine:
     """Async Ready Pool executor.
 
-    Параметри:
-      • `max_workers` - фіксована кількість паралельних воркерів. Дефолт
-        6: компроміс між паралелізмом для I/O-важких графів і захистом
-        від OOM на гігантських графах. Передайте інше значення в
-        конструктор для тюнінгу під своє навантаження.
+    Parameters:
+      • `max_workers` - a fixed number of concurrent workers. Default
+        6: a compromise between parallelism for I/O-heavy graphs and protection
+        against OOM on massive graphs. Pass a different value to
+        the constructor to tune it for your workload.
 
-    Контракти:
-      • Підтримувані `trigger_rule`: `all_success` (AND), `one_success` (OR).
-      • Гарантує, що нащадок потрапить у `ready_queue` рівно один раз -
-        захищено `state.lock`.
-      • На першій критичній помилці виставляє `context.should_stop=True`
-        і re-raise помилку після того, як активні воркери дограли.
+    Contracts:
+      • Supported `trigger_rule`: `all_success` (AND), `one_success` (OR).
+      • Guarantees that a descendant will enter the `ready_queue` exactly once —
+        protected by `state.lock`.
+      • On the first critical error, sets `context.should_stop=True`
+        and re-raises the error after active workers have finished.
     """
 
     DEFAULT_MAX_WORKERS = 6
@@ -231,7 +221,7 @@ class WorkflowEngine:
     def __init__(self, max_workers: int | None = None):
         self.max_workers = max_workers or self.DEFAULT_MAX_WORKERS
 
-    # Публічний вхід
+    # Public entrance
 
     async def run(
         self,
@@ -239,7 +229,7 @@ class WorkflowEngine:
         job_id: str,
         context: ExecutionContext,
     ) -> dict:
-        # Pre-flight: усі типи мають бути зареєстровані.
+        # Pre-flight: All types must be registered.
         for n in workflow.nodes:
             if n.type not in NODE_REGISTRY:
                 raise UnknownNodeTypeError(f"Unknown node type: {n.type!r}")
@@ -303,8 +293,6 @@ class WorkflowEngine:
         await context.log(None, "Workflow completed successfully")
         return context.node_outputs
 
-    # Воркер
-
     async def _worker(
         self,
         state: _RunState,
@@ -338,7 +326,7 @@ class WorkflowEngine:
                     ):
                         state.done_event.set()
 
-    # Виконання одного вузла
+    # Assembly of a single unit
 
     async def _process_node(
         self,
@@ -353,20 +341,20 @@ class WorkflowEngine:
         success = False
         output: dict = {}
         try:
-            # 1) Зібрати локальні input_data + порти на момент старту.
-            #    Це snapshot: батьки, що ще не завершилися (для one_success),
-            #    просто не потраплять у вхід - і це правильна семантика.
+            # 1) Collect local `input_data` and ports at the time of startup.
+            #    This is a snapshot: parent processes that haven't finished yet (for `one_success`)
+            #    simply won't be included in the input—and that's the correct behavior.
             input_data, mapped = await self._route_inputs(state, context, node_def)
 
             async with state.lock:
-                # Записуємо порти у спільний контекст - атомарно з рештою стану,
-                # щоб інші паралельні читачі не побачили half-write.
+                # Write the ports to a shared context—atomically with the rest of the state—
+                # so that other concurrent readers do not see a half-write.
                 for port_name, value in mapped.items():
                     context.set_input(node_def.id, port_name, value)
 
-            # 2) Універсальний міст port-mapping → шаблонний `input`.
-            #    Дублюємо port-значення в input_data, щоб шаблони
-            #    `{input.<port>}` працювали без переписування вузлів.
+            # 2) Universal port-mapping bridge → `input` template.
+            #    We duplicate the port values in `input_data` so that templates
+            #    `{input.<port>}` work without overwriting nodes.
             for port_name, value in mapped.items():
                 if isinstance(value, dict):
                     for k, v in value.items():
@@ -380,16 +368,16 @@ class WorkflowEngine:
                     f"node {node.id!r} returned {type(output).__name__}, expected dict"
                 )
             success = True
-        except Exception as exc:  # noqa: BLE001 - навмисно ловимо все
+        except Exception as exc:  # noqa: BLE001 - we intentionally capture everything
             await context.log(node.id, f"Error: {exc}", level="error")
-            # М'яка зупинка: запам'ятовуємо першу помилку і ставимо прапорець.
+            # Soft stop: We record the first error and set a flag.
             context.request_stop(exc)
         finally:
-            # Атомарне оновлення стану + поширення «фінішу» на нащадків.
+            # Atomic state update + propagation of the “finish” to descendants.
             await self._finalize_node(state, context, node_def, success, output)
 
     
-    # Маршрутизація даних
+    # Data Routing
     
 
     async def _route_inputs(
@@ -398,14 +386,14 @@ class WorkflowEngine:
         context: ExecutionContext,
         node: Node,
     ) -> tuple[dict, dict]:
-        """Збирає `(legacy_merged_input, mapped_ports)` для конкретного запуску.
+        """Collects `(legacy_merged_input, mapped_ports)` for a specific run.
 
-        Snapshot під `state.lock`:
-          • dead_edges/dead_nodes - щоб не бачити частково оновленого стану,
-          • node_outputs - узгоджений зріз виходів усіх батьків, що
-            завершилися до цього моменту.
+        Snapshot under `state.lock`:
+          • dead_edges/dead_nodes - to avoid seeing a partially updated state,
+          • node_outputs - a consistent snapshot of the outputs of all parents that
+            have completed by this point.
 
-        Тип-перевірка / автоконвертація port-mapping залишилися без змін.
+        Type checking / auto-conversion of port mappings remain unchanged.
         """
         async with state.lock:
             dead_edges_snap = set(state.dead_edges)
@@ -443,9 +431,9 @@ class WorkflowEngine:
 
             expected = _expected_port_type(node.type, edge.target_handle)
             if expected and value is not None:
-                # `_try_convert` тепер сам - no-op для збігу типів, бо
-                # `TypeAdapter.validate_python` без модифікацій повертає
-                # коректне значення. Тому окрема `_matches`-перевірка зайва.
+                # `_try_convert` is now a no-op for type matching, because
+                # `TypeAdapter.validate_python` returns
+                # a valid value without any modifications. Therefore, a separate `_matches` check is unnecessary.
                 try:
                     value = _try_convert(value, expected)
                 except (ValueError, TypeError) as exc:
@@ -469,7 +457,7 @@ class WorkflowEngine:
         return merged, mapped
 
     
-    # Атомарне завершення вузла + поширення
+    # Atomic node termination + propagation
     
 
     async def _finalize_node(
@@ -480,12 +468,12 @@ class WorkflowEngine:
         success: bool,
         output: dict,
     ) -> None:
-        """Записати результат та оновити стан нащадків.
+        """Save the result and update the status of the descendants.
 
-        Цей метод викликається у блоці `finally` `_process_node`, тож
-        його контракт - НЕ кидати винятків (інакше воркер впаде з
-        unhandled exception, а інші продовжать виконання). Усі помилки
-        тут конвертуємо у warning-лог.
+        This method is called in the `finally` block of `_process_node`, so
+        its contract is NOT to throw exceptions (otherwise, the worker will crash due to
+        an unhandled exception, while the others will continue executing). All errors
+        here are converted to warning logs.
         """
         try:
             ready_now: list[str] = []
@@ -498,7 +486,7 @@ class WorkflowEngine:
                         node.id,
                         f"Done. output keys: {list(output)}",
                     )
-                    # Condition-вузол: вбиваємо ребро з протилежним handle.
+                    # Condition node: remove the edge with the opposite handle.
                     if node.type == "condition":
                         chosen = "true" if output.get("result") else "false"
                         for e in state.outbound[node.id]:
@@ -509,7 +497,7 @@ class WorkflowEngine:
                             ):
                                 state.dead_edges.add(_edge_key(e))
                 else:
-                    # Помилка/виняток: вузол мертвий, усі outbound-ребра - мертві.
+                    # Error/exception: The node is down; all outbound edges are down.
                     state.finished.add(node.id)
                     state.dead_nodes.add(node.id)
                     for e in state.outbound[node.id]:
@@ -519,20 +507,16 @@ class WorkflowEngine:
                 if state.pending_count == 0:
                     state.done_event.set()
 
-                # Поширюємо «фініш» на нащадків. Може каскадно вбити
-                # кілька рівнів вглиб (через _propagate_dead).
+                # We propagate the “finish” state to descendants. This can cascade
+                # down several levels (via _propagate_dead).
                 ready_now = await self._propagate_finish(state, context, node.id)
 
             for child_id in ready_now:
                 state.queue.put_nowait(child_id)
-        except Exception as exc:  # noqa: BLE001 - захист воркера
+        except Exception as exc:  # noqa: BLE001 - Worker Protection
             logger.exception(
                 "Internal error while finalizing node %s: %s", node.id, exc
             )
-
-    
-    # Поширення «фініш-сигналу» по графу (під state.lock)
-    
 
     async def _propagate_finish(
         self,
@@ -540,14 +524,14 @@ class WorkflowEngine:
         context: ExecutionContext,
         finished_id: str,
     ) -> list[str]:
-        """Перевірити кожного нащадка `finished_id` та повернути список тих,
-        кого треба покласти у чергу. Викликається ПІД `state.lock`.
+        """Check each descendant of `finished_id` and return a list of those
+        who should be added to the queue. Called under `state.lock`.
 
-        Може каскадно позначати інших як мертвих (через _kill).
+        May cascade the marking of others as dead (via _kill).
         """
         to_enqueue: list[str] = []
-        # Стек для каскаду «смерті»: коли вузол позначається мертвим,
-        # його нащадки теж переоцінюються в наступних ітераціях.
+        # “Death” cascade stack: when a node is marked as dead,
+        # its descendants are also re-evaluated in subsequent iterations.
         pending_finished: list[str] = [finished_id]
 
         while pending_finished:
@@ -562,8 +546,8 @@ class WorkflowEngine:
                     state.scheduled.add(child_id)
                     to_enqueue.append(child_id)
                 elif verdict == "dead":
-                    # Каскадна смерть: позначити, додати в стек, щоб
-                    # переоцінити нащадків саме цього вузла.
+                    # Cascading death: mark and add to the stack to
+                    # re-evaluate the descendants of this specific node.
                     self._kill(state, child_id)
                     await context.log(
                         child_id,
@@ -574,20 +558,20 @@ class WorkflowEngine:
                     if state.pending_count == 0:
                         state.done_event.set()
                     pending_finished.append(child_id)
-                # verdict == "wait": просто чекаємо ще батьків
+                # verdict == “wait”: we're just waiting for the parents
 
         return to_enqueue
 
     @staticmethod
     def _evaluate_child(state: _RunState, child_id: str) -> str:
-        """Повертає 'ready' / 'dead' / 'wait' для нащадка.
+        """Returns ‘ready’ / ‘dead’ / ‘wait’ for the child.
 
-        Семантика:
-          • all_success: усі батьки мають фінішувати живими; перший
-            мертвий батько → дитина мертва (швидкий short-circuit).
-          • one_success: достатньо хоч одного живого фінішованого батька;
-            поки живі батьки лишаються в роботі - чекаємо; якщо всі
-            батьки фінішували й жоден не живий - мертва.
+        Semantics:
+          • all_success: all parents must finish alive; the first
+            dead parent → the child is dead (early termination).
+          • one_success: at least one alive, finished parent is sufficient;
+            as long as alive parents remain active, we wait; if all
+            parents have finished and none are alive, the child is dead.
         """
         node = state.nodes_by_id[child_id]
         rule = getattr(node, "trigger_rule", "all_success")
@@ -626,8 +610,8 @@ class WorkflowEngine:
 
     @staticmethod
     def _kill(state: _RunState, node_id: str) -> None:
-        """Позначити вузол мертвим + проштампувати його outbound-ребра.
-        Викликається ПІД `state.lock`."""
+        """Mark the node as dead and stamp its outbound edges.
+        Called under `state.lock`."""
         if node_id in state.dead_nodes:
             return
         state.dead_nodes.add(node_id)

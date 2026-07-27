@@ -4,7 +4,7 @@ from typing import AsyncIterator
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-import app.nodes  # noqa: F401  — імпорт запускає discover_nodes()
+import app.nodes  # noqa: F401  — import discover_nodes()
 from app.api import jobs, websocket, workflows
 from app.core.job_manager import JobManager
 from app.core.log_broker import LogBroker
@@ -29,8 +29,8 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
-# Дозволяємо лише dev-origin Vite. Якщо у майбутньому буде продакшн-домен —
-# додавай його сюди (або читай зі змінної середовища).
+# We only allow the Vite dev-origin domain. If a production domain is added in the future—
+# add it here (or read it from an environment variable).
 app.add_middleware(
     CORSMiddleware,
     allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
@@ -51,11 +51,10 @@ async def health() -> dict[str, str]:
 
 @app.get("/api/nodes/schema", tags=["meta"])
 async def nodes_schema() -> dict[str, list[dict]]:
-    """JSON-маніфест усіх зареєстрованих вузлів для динамічного UI.
-
-    Кожен елемент містить порти (in/out), UI-метадані (`info`),
-    декларативні static-зв'язки (`is_readonly: true`) та pydantic-схему
-    конфігу. Помилка побудови схеми одного вузла не валить ендпоінт.
+    """A JSON manifest of all registered nodes for the dynamic UI.
+    Each element contains ports (in/out), UI metadata (`info`),
+    declarative static constraints (`is_readonly: true`), and a pydantic
+    schema. A schema-building error for a single node does not crash the endpoint.
     """
     schemas: list[dict] = []
     for type_name, cls in sorted(NODE_REGISTRY.items()):

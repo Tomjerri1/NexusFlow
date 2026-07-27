@@ -7,7 +7,7 @@ from app.schemas.node_configs import ExpressionConfig
 
 
 class ExpressionEvalError(ValueError):
-    """Помилка під час обчислення виразу expression-вузла."""
+    """An error occurred while evaluating the expression in the expression node."""
 
 
 @node_info(
@@ -18,14 +18,13 @@ class ExpressionEvalError(ValueError):
     description="Evaluates a sandboxed Python expression over input/nodes.",
 )
 @input_port("expression", type_hint="str", required=False, description="Override of config.expression.")
-@input_port("input", type_hint="dict", required=False, description="Generic data input.")
+@input_port("input", type_hint="any", required=False, description="Generic data input.")
 @output_port("result", type_hint="any", description="Computed value.")
 class ExpressionNode(BaseNode):
-    """Гнучкий обчислювач: повертає `{"result": <value>}` для будь-якого виразу.
-
-    Доступні імена у виразі:
-      - `input` — локальний `input_data`, переданий двигуном
-      - `nodes` — snapshot `node_outputs` усіх попередніх вузлів
+    """Flexible evaluator: returns `{“result”: <value>}` for any expression.
+    Available names in the expression:
+      - `input` — the local `input_data` passed by the engine
+      - `nodes` — a snapshot of `node_outputs` from all preceding nodes
     """
 
     type_name = "expression"

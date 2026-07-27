@@ -10,6 +10,9 @@ dependencies = [
     "pydantic>=2.7",
     "aiofiles>=24.1",
     "simpleeval>=1.0",
+    "pandas",
+    "python-docx",
+    "openpyxl",
 ]
 
 [project.optional-dependencies]

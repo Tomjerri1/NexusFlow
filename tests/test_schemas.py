@@ -15,7 +15,7 @@ from app.schemas.node_configs import (
 from app.schemas.workflow import Edge, Node, Workflow
 
 
-# ---------- Edge / Node / Workflow ----------
+#Edge / Node / Workflow
 
 def test_edge_alias_from_to_maps_to_python_names():
     edge = Edge.model_validate({"from": "a", "to": "b"})
@@ -25,8 +25,8 @@ def test_edge_alias_from_to_maps_to_python_names():
 
 
 def test_edge_handles_accept_arbitrary_port_names():
-    """Після переходу на гібридний port-mapping `source_handle`/`target_handle`
-    можуть бути будь-яким рядком (назва порту), не лише true/false.
+    """After switching to hybrid port mapping, `source_handle`/`target_handle`
+    can be any string (port name), not just true or false.
     """
     e1 = Edge.model_validate({"from": "a", "to": "b", "source_handle": "true"})
     assert e1.source_handle == "true"
@@ -35,7 +35,6 @@ def test_edge_handles_accept_arbitrary_port_names():
     )
     assert e2.source_handle == "content"
     assert e2.target_handle == "path"
-
 
 def test_workflow_minimal_valid():
     wf = Workflow.model_validate(
@@ -52,7 +51,6 @@ def test_workflow_minimal_valid():
     assert len(wf.nodes) == 2
     assert len(wf.edges) == 1
 
-
 def test_workflow_rejects_duplicate_node_ids():
     with pytest.raises(ValidationError, match="Duplicate"):
         Workflow.model_validate(
@@ -66,11 +64,10 @@ def test_workflow_rejects_duplicate_node_ids():
             }
         )
 
-
 def test_workflow_rejects_cyclic_graph():
-    """Workflow має бути DAG — двонаправлений зв'язок `A → B → A`
-    падає на валідаторі ще до запуску job'у. У повідомленні є слово
-    `cycle` і список вузлів-учасників (`['a', 'b']`).
+    """The workflow must be a DAG—a bidirectional relationship `A → B → A`
+    is flagged by the validator before the job even starts. The message contains the word
+    `cycle` and a list of participating nodes (`[‘a’, ‘b’]`).
     """
     with pytest.raises(ValidationError) as exc_info:
         Workflow.model_validate(
@@ -90,7 +87,6 @@ def test_workflow_rejects_cyclic_graph():
     assert "cycle" in text.lower()
     assert "'a'" in text and "'b'" in text
 
-
 def test_workflow_rejects_self_loop():
     """Self-loop A → A — теж цикл, теж має падати на валідаторі."""
     with pytest.raises(ValidationError, match="cycle"):
@@ -102,7 +98,6 @@ def test_workflow_rejects_self_loop():
             }
         )
 
-
 def test_workflow_rejects_dangling_edge():
     with pytest.raises(ValidationError, match="unknown"):
         Workflow.model_validate(
@@ -112,7 +107,6 @@ def test_workflow_rejects_dangling_edge():
                 "edges": [{"from": "a", "to": "ghost"}],
             }
         )
-
 
 def test_workflow_rejects_unknown_node_type():
     with pytest.raises(ValidationError):
@@ -124,11 +118,9 @@ def test_workflow_rejects_unknown_node_type():
             }
         )
 
-
 def test_workflow_rejects_empty_name():
     with pytest.raises(ValidationError):
         Workflow.model_validate({"name": "", "nodes": [], "edges": []})
-
 
 def test_workflow_is_readonly_defaults_to_false():
     wf = Workflow.model_validate(
@@ -139,7 +131,6 @@ def test_workflow_is_readonly_defaults_to_false():
         }
     )
     assert wf.is_readonly is False
-
 
 def test_workflow_accepts_is_readonly_true():
     wf = Workflow.model_validate(
@@ -152,18 +143,15 @@ def test_workflow_accepts_is_readonly_true():
     )
     assert wf.is_readonly is True
 
-
 def test_edge_is_readonly_defaults_false_and_accepts_true():
     e1 = Edge.model_validate({"from": "a", "to": "b"})
     assert e1.is_readonly is False
     e2 = Edge.model_validate({"from": "a", "to": "b", "is_readonly": True})
     assert e2.is_readonly is True
 
-
 def test_node_trigger_rule_default_is_all_success():
     n = Node.model_validate({"id": "x", "type": "log", "config": {"message": "hi"}})
     assert n.trigger_rule == "all_success"
-
 
 def test_node_trigger_rule_accepts_one_success():
     n = Node.model_validate(
@@ -172,7 +160,6 @@ def test_node_trigger_rule_accepts_one_success():
     )
     assert n.trigger_rule == "one_success"
 
-
 def test_node_trigger_rule_rejects_unknown_value():
     with pytest.raises(ValidationError):
         Node.model_validate(
@@ -180,13 +167,11 @@ def test_node_trigger_rule_rejects_unknown_value():
              "trigger_rule": "always"}
         )
 
-
-# ---------- inputs shorthand → edges ----------
-
+#inputs shorthand → edges
 
 def test_inputs_shorthand_string_defaults_source_handle_to_output():
-    """Bare-string значення → source_handle="output" (DEFAULT_SOURCE_HANDLE).
-    Це стандарт для більшості наших вузлів (custom_code, log, …).
+    """Bare-string value → source_handle="output" (DEFAULT_SOURCE_HANDLE).
+    This is the default for most of our nodes (custom_code, log, …).
     """
     wf = Workflow.model_validate(
         {
@@ -207,7 +192,6 @@ def test_inputs_shorthand_string_defaults_source_handle_to_output():
     assert e.source_handle == "output"
     assert e.target_handle == "input"
 
-
 def test_inputs_shorthand_tuple_creates_port_to_port_edge():
     wf = Workflow.model_validate(
         {
@@ -226,7 +210,6 @@ def test_inputs_shorthand_tuple_creates_port_to_port_edge():
     e = wf.edges[0]
     assert e.source_handle == "data"
     assert e.target_handle == "input"
-
 
 def test_inputs_control_flow_keys_create_branch_edges():
     wf = Workflow.model_validate(
@@ -249,7 +232,6 @@ def test_inputs_control_flow_keys_create_branch_edges():
     assert handles == ["false", "true"]
     assert all(e.target_handle is None for e in branch_edges)
 
-
 def test_inputs_does_not_duplicate_already_explicit_edges():
     wf = Workflow.model_validate(
         {
@@ -261,7 +243,7 @@ def test_inputs_does_not_duplicate_already_explicit_edges():
                     "inputs": {"input": ("t1", "data")},
                 },
             ],
-            # Те саме ребро вказано вручну — Workflow-валідатор НЕ дублює.
+            # The same edge is specified manually—the Workflow validator does NOT duplicate it.
             "edges": [
                 {"from": "t1", "to": "l1",
                  "source_handle": "data", "target_handle": "input"}
@@ -270,10 +252,9 @@ def test_inputs_does_not_duplicate_already_explicit_edges():
     )
     assert len(wf.edges) == 1
 
-
 def test_inputs_field_is_excluded_from_json_dump():
-    """Поле `inputs` — code-only shortcut: воно не повинне потрапляти у
-    канонічний JSON-формат. Фронтенд читає лише `edges`.
+    """The `inputs` field is a code-only shortcut: it should not appear in
+    the canonical JSON format. The frontend only reads `edges`.
     """
     wf = Workflow.model_validate(
         {
@@ -290,9 +271,8 @@ def test_inputs_field_is_excluded_from_json_dump():
     )
     dumped = wf.model_dump_json(by_alias=True)
     assert '"inputs"' not in dumped
-    # А ось згенероване ребро має бути присутнє.
+    # However, the generated edge must be present.
     assert '"from":"t1"' in dumped or '"from": "t1"' in dumped
-
 
 def test_inputs_unknown_source_node_fails_integrity_check():
     with pytest.raises(ValidationError, match="unknown"):
@@ -307,7 +287,6 @@ def test_inputs_unknown_source_node_fails_integrity_check():
             }
         )
 
-
 def test_inputs_invalid_value_format_raises():
     with pytest.raises(ValidationError):
         Workflow.model_validate(
@@ -316,16 +295,15 @@ def test_inputs_invalid_value_format_raises():
                 "nodes": [
                     {"id": "t1", "type": "manual_trigger", "config": {}},
                     {"id": "l1", "type": "log", "config": {"message": "x"},
-                     # 3-element tuple — недопустимий формат
+                     # 3-element tuple — invalid format
                      "inputs": {"input": ("t1", "a", "b")}},
                 ],
                 "edges": [],
             }
         )
 
-
 def test_inputs_list_value_creates_edge_per_source():
-    """fan-in: список джерел в один target_handle → окремий Edge на кожне."""
+    """fan-in: a list of sources mapped to a single target_handle → a separate Edge for each one."""
     wf = Workflow.model_validate(
         {
             "name": "i_list",
@@ -350,7 +328,6 @@ def test_inputs_list_value_creates_edge_per_source():
         ("n2", "out"): "input",
     }
 
-
 def test_inputs_list_with_three_sources_creates_three_edges():
     wf = Workflow.model_validate(
         {
@@ -371,10 +348,9 @@ def test_inputs_list_with_three_sources_creates_three_edges():
     )
     assert len([e for e in wf.edges if e.to_node == "fan"]) == 3
 
-
 def test_inputs_list_dedups_against_existing_edges():
-    """Якщо одне з джерел у списку вже є як explicit-edge — дублювання
-    НЕ відбувається, але інші джерела зі списку додаються нормально.
+    """If one of the sources in the list is already present as an explicit edge,
+    it is NOT duplicated, but the other sources in the list are added as usual.
     """
     wf = Workflow.model_validate(
         {
@@ -395,14 +371,13 @@ def test_inputs_list_dedups_against_existing_edges():
     )
     incoming = [e for e in wf.edges if e.to_node == "merge"]
     assert len(incoming) == 2  # one pre-existing, one added from list
-    # порядок: спершу explicit, потім додані з inputs (b)
+    # Order: first explicit, then those added from inputs (b)
     assert incoming[0].from_node == "a"
     assert incoming[1].from_node == "b"
 
-
 def test_workflow_edges_default_to_empty_list_when_using_inputs_only():
-    """Якщо програміст оголошує всі звʼязки через `inputs`, явний
-    `edges=[]` можна не передавати — він тепер опціональний.
+    """If the programmer declares all edges using `inputs`, there is no need to explicitly
+    pass `edges=[]`—it is now optional.
     """
     wf = Workflow.model_validate(
         {
@@ -412,13 +387,12 @@ def test_workflow_edges_default_to_empty_list_when_using_inputs_only():
                 {"id": "l1", "type": "log", "config": {"message": "x"},
                  "inputs": {"input": "t1"}},
             ],
-            # `edges` ключа взагалі немає
+            # The `edges` key does not exist at all
         }
     )
     assert len(wf.edges) == 1
 
-
-# ---------- node_configs ----------
+#node_configs
 
 @pytest.mark.parametrize(
     "type_name, config, expected_cls",
@@ -435,34 +409,30 @@ def test_validate_node_config_for_each_type(type_name, config, expected_cls):
     cfg = validate_node_config(node)
     assert isinstance(cfg, expected_cls)
 
-
 def test_validate_node_config_unknown_type_raises():
-    # Цей шлях обходить Pydantic-Literal: створюємо Node динамічно через construct.
+    # This approach bypasses Pydantic-Literal: we create a Node dynamically using `construct`.
     bad_node = Node.model_construct(id="x", type="unknown", config={})  # type: ignore[arg-type]
     with pytest.raises(ValueError, match="Unknown node type"):
         validate_node_config(bad_node)
 
 
 def test_read_file_path_optional_for_port_mapping():
-    """Шлях у ReadFileConfig може бути порожнім — реальне значення прийде
-    через port-mapping (`target_handle="path"`). Дефолт = "".
+    """The path in ReadFileConfig can be empty—the actual value will be provided
+    via port mapping (`target_handle=“path”`). Default = “”.
     """
     cfg = ReadFileConfig.model_validate({})
     assert cfg.path == ""
     assert cfg.encoding == "utf-8"
 
-
 def test_condition_requires_expression():
     with pytest.raises(ValidationError):
         ConditionConfig.model_validate({})
-
 
 def test_log_node_default_level_is_info():
     cfg = LogNodeConfig.model_validate({"message": "x"})
     assert cfg.level == "info"
 
-
-# ---------- Job / JobStatus / LogEntry ----------
+#Job / JobStatus / LogEntry
 
 def test_job_default_logs_empty():
     job = Job(
@@ -476,13 +446,11 @@ def test_job_default_logs_empty():
     assert job.error is None
     assert job.finished_at is None
 
-
 def test_job_status_enum_values():
     assert JobStatus.PENDING.value == "pending"
     assert JobStatus.RUNNING.value == "running"
     assert JobStatus.SUCCESS.value == "success"
     assert JobStatus.FAILED.value == "failed"
-
 
 def test_log_entry_done_level_accepted():
     entry = LogEntry(
@@ -492,7 +460,6 @@ def test_log_entry_done_level_accepted():
         message="finished",
     )
     assert entry.level == "done"
-
 
 def test_log_entry_rejects_invalid_level():
     with pytest.raises(ValidationError):

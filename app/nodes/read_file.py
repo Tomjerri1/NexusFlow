@@ -9,7 +9,6 @@ from app.schemas.node_configs import ReadFileConfig
     display_name="Read File",
     category="io",
     color="#0284c7",
-    icon="file-text",
     description="Reads UTF-8 (or configured encoding) text file.",
 )
 @input_port("path", type_hint="str", required=False, description="Override of config.path.")
@@ -21,7 +20,7 @@ class ReadFileNode(BaseNode):
     config_model = ReadFileConfig
 
     async def execute(self, context: ExecutionContext, input_data: dict) -> dict:
-        # Пріоритет: port `path` → config.path → ключ `path` з input_data.
+        # Priority: port `path` → config.path → `path` key from input_data.
         port_value = context.get_input(self.id, "path")
         if isinstance(port_value, str) and port_value:
             raw_path = port_value

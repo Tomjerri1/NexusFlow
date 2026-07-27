@@ -4,7 +4,7 @@ from app.schemas.workflow import Edge, Node
 
 
 class CycleDetectedError(ValueError):
-    """Граф workflow містить цикл — DAG-вимога порушена."""
+    """The workflow graph contains a cycle—the DAG constraint has been violated."""
 
     def __init__(self, cycle_node_ids: list[str]):
         self.cycle_node_ids = cycle_node_ids
@@ -12,9 +12,8 @@ class CycleDetectedError(ValueError):
 
 
 def topological_sort(nodes: list[Node], edges: list[Edge]) -> list[Node]:
-    """Kahn's algorithm. Повертає вузли в порядку виконання.
-
-    Кидає `CycleDetectedError`, якщо граф не є DAG.
+    """Kahn's algorithm. Returns the nodes in the order of execution.
+    Throws a `CycleDetectedError` if the graph is not a DAG.
     """
     nodes_by_id: dict[str, Node] = {n.id: n for n in nodes}
     in_degree: dict[str, int] = {n.id: 0 for n in nodes}

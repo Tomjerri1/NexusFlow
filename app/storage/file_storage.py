@@ -5,17 +5,14 @@ from app.schemas.workflow import Workflow
 
 WORKFLOWS_DIR = (Path(__file__).resolve().parent.parent.parent / "workflows").resolve()
 
-# Тільки літери/цифри/_/-, від 1 до 64 символів — щоб ім'я не могло втекти з папки.
+# Only letters/numbers/_/-, 1 to 64 characters — to prevent the name from overflowing the folder.
 _NAME_RE = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
-
 
 class WorkflowNotFoundError(FileNotFoundError):
     pass
 
-
 class WorkflowNameError(ValueError):
     pass
-
 
 def _safe_path(name: str) -> Path:
     if not _NAME_RE.match(name):

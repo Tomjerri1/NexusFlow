@@ -6,7 +6,6 @@ from app.schemas.node_configs import LogNodeConfig
 
 
 def _json_safe(value):
-    """JSON-серіалізатор для типів, які стандартний json не вміє."""
     try:
         return str(value)
     except Exception:  # noqa: BLE001
@@ -20,14 +19,13 @@ def _json_safe(value):
     icon="terminal",
     description="Logs a message and forwards input downstream.",
 )
-@input_port("input", type_hint="dict", required=False)
-@input_port("message", type_hint="str", required=False, description="Override of config.message.")
+@input_port("input", type_hint="any", required=False)
+
 @output_port("output", type_hint="dict", description="Pass-through of the input.")
 class LogNode(BaseNode):
-    """Логує повідомлення (з підстановкою шаблонів) і пробрасує input далі.
-
-    Якщо ні з порту `message`, ні з `config.message` нічого не прийшло —
-    замість порожнього рядка дампимо весь `input_data` як JSON.
+    """Logs the message (with template substitution) and passes the input on.
+    If nothing has been received from either the `message` port or `config.message`—
+    instead of an empty string, we dump the entire `input_data` as JSON.
     """
 
     type_name = "log"

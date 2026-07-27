@@ -11,8 +11,9 @@ NodeType = Literal[
     "custom_code",
     "expression",
     "note",
+    "read_directory",
+    "hello",
 ]
-
 
 # Node activation rules based on the state of the incoming edges.
 # `all_success` — fire only if ALL incoming edges are alive (AND).
@@ -22,13 +23,12 @@ TriggerRule = Literal["all_success", "one_success"]
 
 
 class Edge(BaseModel):
-    """Спрямоване ребро графа: from_node -> to_node.
-
+    """Directed edge of a graph: from_node -> to_node.
     `source_handle`:
-      - для `condition` — "true"/"false" (умовне розгалуження),
-      - для типізованого мапінгу — назва вихідного порту вузла-джерела.
-    `target_handle` — назва вхідного порту вузла-приймача (port-mapping).
-    Якщо `None` — використовується дефолтна merge-маршрутизація (legacy).
+      - for `condition` — “true”/“false” (conditional branching),
+      - for typed mapping — the name of the source node's output port.
+    `target_handle` — the name of the destination node’s input port (port-mapping).
+    If `None` — default merge routing (legacy) is used.
     """
 
     model_config = ConfigDict(populate_by_name=True)
@@ -39,12 +39,10 @@ class Edge(BaseModel):
     target_handle: str | None = None
     is_readonly: bool = False
 
-
 CONTROL_INPUT_KEYS = {
     "@on_true": "true",
     "@on_false": "false",
 }
-
 
 # Source-handle, used when the programmer writes only the node id
 # (`inputs={"port": "trigger_1"}`) without an explicit source-port. Most
@@ -53,11 +51,9 @@ CONTROL_INPUT_KEYS = {
 # `read_file.content`) use the tuple-form.
 DEFAULT_SOURCE_HANDLE = "output"
 
-
 NodeInputAtom = str | tuple[str, str]
 
 NodeInputValue = NodeInputAtom | list[NodeInputAtom]
-
 
 class Node(BaseModel):
     id: str
@@ -69,23 +65,21 @@ class Node(BaseModel):
 
     inputs: dict[str, NodeInputValue] | None = Field(default=None, exclude=True)
 
-    # UI Metadata Pocket: непрозорий словник для фронтенду (координати на
-    # канвасі, розміри стікерів, згорнутість груп тощо). Двигун у це поле
-    # НЕ заглядає — воно існує лише для round-trip між React Flow і JSON.
-    # Тому валідація — мінімальна (тільки тип `dict`), без власної схеми.
-    # Типовий вміст із фронтенду:
-    #   {"position": {"x": 120.5, "y": 40}, "width": 240, "height": 160}
+    # UI Metadata Pocket: an opaque dictionary for the frontend (coordinates on
+    # the canvas, sticker sizes, group collapse status, etc.). The engine does
+    # NOT look into this field—it exists solely for round-trip communication between React Flow and JSON.
+    # Therefore, validation is minimal (only the `dict` type), with no custom schema.
+    # Typical content from the frontend:
+    #   {“position”: {“x”: 120.5, “y”: 40}, ‘width’: 240, “height”: 160}
     ui_metadata: dict = Field(default_factory=dict)
 
 
 class Workflow(BaseModel):
-    """JSON-граф workflow. Валідатор перевіряє унікальність id вузлів
-    та цілісність ребер (від/до посилаються на наявні id).
-
-    `is_readonly` — глобальний прапорець "лише для перегляду": усі ребра
-    графа автоматично трактуються як readonly у двигуні та у фронтенді.
+    """JSON workflow graph. The validator checks the uniqueness of node IDs
+    and the integrity of edges (from/to refer to existing IDs).
+    `is_readonly` — a global “read-only” flag: all edges
+    in the graph are automatically treated as read-only in the engine and in the frontend.
     """
-
     name: str = Field(min_length=1)
     nodes: list[Node]
     edges: list[Edge] = Field(default_factory=list)
@@ -228,11 +222,11 @@ class Workflow(BaseModel):
                 f"nodes: {exc.cycle_node_ids}"
             ) from exc
 
-        # Required-port satisfaction. Кожен `@input_port(..., required=True)`
-        # повинен мати або вхідне ребро на свій `target_handle`, або
-        # непорожнє значення в `node.config[<port_name>]`. Інакше рушій
-        # упаде з невиразним рантайм-помилкою — краще fail-loud на валідації.
-        # Порожнім вважаємо лише `None` та `""`; `False`/`0`/`[]` — валідні.
+        # Required-port satisfaction. Every `@input_port(..., required=True)`
+        # must have either an incoming edge to its `target_handle`, or
+        # a non-empty value in `node.config[<port_name>]`. Otherwise, the engine
+        # will crash with an ambiguous runtime error—it’s better to fail loudly on validation.
+        # We consider only `None` and `“”` to be empty; `False`/`0`/`[]` are valid.
         for node in self.nodes:
             cls = NODE_REGISTRY.get(node.type)
             if cls is None:

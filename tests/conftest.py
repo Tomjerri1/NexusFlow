@@ -1,20 +1,20 @@
-"""Спільні фікстури для всього test-пакета."""
+"""Shared fixtures for the entire test suite."""
 
 import sys
 from pathlib import Path
 
-# Дозволяємо запуск pytest з кореня репозиторію без `pip install -e .`
+# Allow pytest to be run from the root of the repository without `pip install -e .`
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 import pytest
 
-import app.nodes  # noqa: F401  — імпорт запускає discover_nodes()
+import app.nodes  # noqa: F401 — the import triggers discover_nodes()
 from app.core.context import ExecutionContext
 from app.schemas.job import LogEntry
 
 
 class FakeBroker:
-    """In-memory accumulator замість справжнього LogBroker — для unit-тестів."""
+    """An in-memory accumulator instead of the actual LogBroker—for unit tests."""
 
     def __init__(self) -> None:
         self.entries: list[tuple[str, LogEntry]] = []

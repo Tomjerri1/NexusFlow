@@ -12,7 +12,7 @@ from app.schemas.node_configs import ManualTriggerConfig
 )
 @output_port("data", type_hint="dict", description="Initial payload propagated downstream.")
 class ManualTriggerNode(BaseNode):
-    """Стартовий вузол. Просто емітить `initial_data` як свій output."""
+    """Start node. It simply emits `initial_data` as its output."""
 
     type_name = "manual_trigger"
     config_model = ManualTriggerConfig

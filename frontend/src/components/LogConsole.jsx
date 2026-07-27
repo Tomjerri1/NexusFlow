@@ -9,8 +9,8 @@ const LEVEL_COLORS = {
   done: "text-emerald-400 font-semibold",
 };
 
-// Інтервал злиття буфера в state. 150 мс — компроміс між плавністю
-// та захистом від рендер-шторму на ~1000 логів/с (≤ 7 рендерів/с).
+// Buffer merge interval in state. 150 ms — a compromise between smoothness
+// and protection against render storms at ~1,000 logs/s (≤ 7 renders/s).
 const FLUSH_INTERVAL_MS = 150;
 
 export default function LogConsole({ jobId, onJobFinished }) {
@@ -56,7 +56,7 @@ export default function LogConsole({ jobId, onJobFinished }) {
     };
   }, [jobId, onJobFinished]);
 
-  // автоскрол униз при новому повідомленні
+  // Auto-scroll down when a new message arrives
   useEffect(() => {
     if (scrollRef.current) {
       scrollRef.current.scrollTop = scrollRef.current.scrollHeight;

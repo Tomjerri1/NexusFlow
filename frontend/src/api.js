@@ -1,4 +1,20 @@
-// Тонкий REST/WS-клієнт. Усі шляхи відносні — Vite-proxy у dev переадресує на :8000.
+async function throwCleanError(res) {
+  const text = await res.text();
+  let cleanMessage = text;
+
+  try {
+    const errJson = JSON.parse(text);
+
+    if (errJson.detail && Array.isArray(errJson.detail)) {
+      cleanMessage = errJson.detail.map(e => e.msg).join("; ");
+    } else if (errJson.detail && typeof errJson.detail === "string") {
+      cleanMessage = errJson.detail;
+    }
+  } catch (e) {
+  }
+
+  throw new Error(`HTTP ${res.status}: ${cleanMessage}`);
+}
 
 export async function runJob(workflow) {
   const res = await fetch("/jobs/run", {
@@ -7,8 +23,7 @@ export async function runJob(workflow) {
     body: JSON.stringify({ workflow }),
   });
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`HTTP ${res.status}: ${text}`);
+    await throwCleanError(res);
   }
   return res.json();
 }
@@ -30,9 +45,6 @@ export async function fetchNodesSchema() {
   return res.json();
 }
 
-// --- Saved workflows ----------------------------------------------------
-// Бекенд монтує CRUD під префіксом `/workflows` (див. app/main.py).
-
 export async function fetchWorkflows() {
   const res = await fetch("/workflows");
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
@@ -42,8 +54,7 @@ export async function fetchWorkflows() {
 export async function fetchWorkflow(name) {
   const res = await fetch(`/workflows/${encodeURIComponent(name)}`);
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`HTTP ${res.status}: ${text}`);
+    await throwCleanError(res);
   }
   return res.json(); // -> Workflow JSON
 }
@@ -55,8 +66,7 @@ export async function saveWorkflow(data) {
     body: JSON.stringify(data),
   });
   if (!res.ok) {
-    const text = await res.text();
-    throw new Error(`HTTP ${res.status}: ${text}`);
+    await throwCleanError(res);
   }
-  return res.json(); // -> {name, saved, path}
+  return res.json();
 }

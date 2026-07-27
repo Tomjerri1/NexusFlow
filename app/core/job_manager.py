@@ -10,13 +10,13 @@ from app.schemas.workflow import Workflow
 
 
 class JobManager:
-    """In-memory реєстр запусків + супервайзер.
+    """In-memory job registry + supervisor.
 
-    Запуски не персистяться — після рестарту сервера втрачаються
-    (TODO для розширення: SQLite). Для MVP цього достатньо.
+    Jobs are not persisted—they are lost after a server restart
+    (TODO for future expansion: SQLite). This is sufficient for the MVP.
 
-    Контракт із WS-клієнтом: по завершенні job у broker публікується
-    sentinel `LogEntry(level="done")` — клієнт читає його і закриває з'єднання.
+    Contract with the WS client: upon job completion, the broker publishes
+    a `LogEntry(level=“done”)` sentinel — the client reads it and closes the connection.
     """
 
     def __init__(self, broker: LogBroker, engine: WorkflowEngine | None = None):
@@ -34,10 +34,10 @@ class JobManager:
         )
         self._jobs[job.id] = job
         self._tasks[job.id] = asyncio.create_task(self._run(workflow, job))
-        # Механізм TTL (Time To Live) за кількістю.
-        # Якщо найстаріший job ще не дограв (наприклад, нескінченний цикл
-        # у користувацькому коді), його asyncio.Task треба явно скасувати,
-        # інакше витік пам'яті/CPU: словник звільнено, а корутина живе.
+        # TTL (Time To Live) mechanism based on count.
+        # If the oldest job hasn't finished yet (e.g., an infinite loop
+        # in user code), its asyncio.Task must be explicitly canceled,
+        # otherwise there will be a memory/CPU leak: the dictionary is freed, but the coroutine remains active.
         MAX_JOBS = 500
         if len(self._jobs) > MAX_JOBS:
             oldest_key = next(iter(self._jobs))
@@ -49,8 +49,6 @@ class JobManager:
         return job
 
     async def _run(self, workflow: Workflow, job: Job) -> None:
-        # Локальна підписка — дублює потік логів у `job.logs`,
-        # щоб GET /jobs/{id} віддавав повну історію.
         log_queue = self.broker.subscribe(job.id)
         collector = asyncio.create_task(self._collect_logs(job, log_queue))
 
@@ -87,6 +85,6 @@ class JobManager:
         return self._jobs.get(job_id)
 
     def list(self, limit: int = 50) -> list[Job]:
-        # Беремо останні `limit` запусків у порядку додавання.
+        # We take the last `limit` runs in the order they were added.
         items = list(self._jobs.values())
         return items[-limit:]

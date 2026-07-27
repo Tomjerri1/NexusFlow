@@ -1,23 +1,28 @@
 from typing import Literal
 
 from pydantic import BaseModel, Field
-
+# from app.nodes.hello import HelloConfig
 from app.schemas.workflow import Node
 
 
 class ManualTriggerConfig(BaseModel):
     initial_data: dict = Field(default_factory=dict)
 
+class ReadDirectoryConfig(BaseModel):
+    path: str = Field(default="data")
+    recursive: bool = Field(default=False)
+    extension: str = Field(default="")
+    name_contains: str = Field(default="")
 
 class ReadFileConfig(BaseModel):
-    """Шлях може бути порожнім, якщо він прийде через порт `path` (port-mapping)."""
+    """The path may be empty if it is passed via the `path` port (port mapping)."""
 
     path: str = ""
     encoding: str = "utf-8"
 
 
 class WriteFileConfig(BaseModel):
-    """Шлях/вміст можуть бути порожніми, якщо приходять через порти `path`/`content`."""
+    """The path/content may be empty if they are received via the `path`/`content` ports."""
 
     path: str = ""
     # If specified, this text is written (supports templates
@@ -28,29 +33,23 @@ class WriteFileConfig(BaseModel):
 
 
 class ConditionConfig(BaseModel):
-    """Безпечне булеве вираження. Приклад: 'input.size > 100'."""
-
     expression: str = Field(min_length=1)
 
-
 class LogNodeConfig(BaseModel):
-    """`message` підтримує плейсхолдери {input.foo} / {nodes.id.bar}.
-
-    Якщо `message` порожнє — вузол логує весь `current_input` як JSON-рядок
-    (зручно для дебагу: підключив порт → побачив дані в логах без зайвих
-    налаштувань).
+    """`message` supports placeholders such as {input.foo} and {nodes.id.bar}.
+    If `message` is empty, the node logs the entire `current_input` as a JSON string
+    (useful for debugging: connect to the port → see the data in the logs without any extra
+    configuration).
     """
-
     message: str = ""
     level: Literal["info", "warning", "error"] = "info"
 
 
 class CustomCodeConfig(BaseModel):
-    """Оркестратор зовнішнього Python-скрипта з папки `scripts/`.
-
-    `script_name` — ім'я модуля без розширення (напр. `my_logic`).
-    `entry_point` — назва async-функції у модулі (за контрактом — корутина).
-    `params` — kwargs, що передаються у функцію разом із `input` та `nodes`.
+    """An orchestrator for an external Python script from the `scripts/` folder.
+    `script_name` — the module name without the extension (e.g., `my_logic`).
+    `entry_point` — the name of the async function in the module (by contract — a coroutine).
+    `params` — kwargs passed to the function along with `input` and `nodes`.
     """
 
     script_name: str = Field(min_length=1)
@@ -59,17 +58,16 @@ class CustomCodeConfig(BaseModel):
 
 
 class ExpressionConfig(BaseModel):
-    """Довільний вираз для simpleeval. Доступні `input` та `nodes`."""
+    """An arbitrary expression for `simpleeval`. `input` and `nodes` are available."""
 
     expression: str = Field(min_length=1)
 
 
 class NoteConfig(BaseModel):
-    """Візуальний стікер. Не бере участі у виконанні графа.
-
-    Двигун повністю ігнорує вузли з типом `note` (через прапорець
-    `BaseNode.is_visual_only=True`): такі вузли відфільтровуються ще до
-    топологічного сортування й побудови _RunState.
+    """Visual sticker. Does not participate in graph execution.
+    The engine completely ignores nodes of type `note` (via the
+    `BaseNode.is_visual_only=True` flag): such nodes are filtered out even before
+    topological sorting and the construction of the _RunState.
     """
 
     title: str = "Примітка"
@@ -81,7 +79,6 @@ class NoteConfig(BaseModel):
     font_family: str = "system-ui, sans-serif"
     font_size: float = 14.0
 
-
 CONFIG_MAP: dict[str, type[BaseModel]] = {
     "manual_trigger": ManualTriggerConfig,
     "read_file": ReadFileConfig,
@@ -91,11 +88,12 @@ CONFIG_MAP: dict[str, type[BaseModel]] = {
     "custom_code": CustomCodeConfig,
     "expression": ExpressionConfig,
     "note": NoteConfig,
+    "read_directory": ReadDirectoryConfig,
+    # "hello": HelloConfig,
 }
 
-
 def validate_node_config(node: Node) -> BaseModel:
-    """Повертає типізований конфіг для вузла. Кидає ValueError, якщо тип невідомий."""
+    """Returns a typed configuration for the node. Raises a ValueError if the type is unknown."""
     cfg_cls = CONFIG_MAP.get(node.type)
     if cfg_cls is None:
         raise ValueError(f"Unknown node type: {node.type!r}")

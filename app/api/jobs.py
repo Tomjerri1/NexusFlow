@@ -13,9 +13,6 @@ router = APIRouter()
 
 
 class RunJobRequest(BaseModel):
-    """Тіло POST /jobs/run. Треба вказати **або** `workflow_name` (для
-    запуску збереженого), **або** `workflow` (інлайн)."""
-
     workflow_name: str | None = None
     workflow: Workflow | None = None
 
@@ -84,7 +81,6 @@ async def run_job(
                 f"workflow {req.workflow_name!r} not found",
             ) from exc
 
-    # Pre-check на цикл — даємо 400 одразу, а не FAILED-job з аутентичним статусом.
     try:
         topological_sort(wf.nodes, wf.edges)
     except CycleDetectedError as exc:

@@ -11,11 +11,11 @@ SCRIPTS_DIR = (Path(__file__).resolve().parent.parent.parent / "scripts").resolv
 
 
 class CustomCodeError(RuntimeError):
-    """Помилка завантаження або виконання користувацького скрипта."""
+    """An error occurred while loading or executing the user script."""
 
 
 def _load_script_module(script_name: str):
-    """Динамічно імпортує модуль із sandbox-папки `scripts/`."""
+    """Dynamically imports a module from the `scripts/` sandbox folder."""
     safe_name = Path(script_name).name
     if safe_name != script_name or not safe_name:
         raise CustomCodeError(f"invalid script_name {script_name!r}")
@@ -53,14 +53,13 @@ def _load_script_module(script_name: str):
     icon="code",
     description="Runs an async function from scripts/<name>.py.",
 )
-@input_port("input", type_hint="dict", required=False)
-@output_port("output", type_hint="dict", description="Whatever the user function returns.")
+@input_port("input", type_hint="any", required=False)
+@output_port("output", type_hint="any", description="Whatever the user function returns.")
 class CustomCodeNode(BaseNode):
-    """Викликає async-функцію `entry_point` з модуля `scripts/<script_name>.py`.
-
-    Контракт користувацької функції:
+    """Calls the `entry_point` async function from the `scripts/<script_name>.py` module.
+    User function contract:
         async def main(input: dict, nodes: dict, **params) -> dict | None
-    Якщо повертає None — нормалізуємо в `{}`.
+    If it returns `None`, we wrap it in `{}`.
     """
 
     type_name = "custom_code"

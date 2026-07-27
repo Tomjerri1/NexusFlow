@@ -115,7 +115,7 @@ def create_complex_demo():
     )
 
     path = save_workflow(workflow)
-    print(f"Сценарій 'Complex_Log_Analyzer' збережено: {path}")
+    print(f"'Complex_Log_Analyzer' збережено: {path}")
     print(f"Згенеровано ребер: {len(workflow.edges)}")
     for e in workflow.edges:
         print(

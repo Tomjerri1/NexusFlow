@@ -1,5 +1,3 @@
-// Єдине джерело правди про типи вузлів — синхронізовано з NODE_REGISTRY бекенду.
-
 export const NODE_TYPES = [
   "manual_trigger",
   "read_file",
@@ -9,9 +7,11 @@ export const NODE_TYPES = [
   "custom_code",
   "expression",
   "note",
+  "read_directory",
+  "hello",
 ];
 
-// Дефолтні config'и при створенні вузла з палітри.
+// Default configurations when creating a node from the palette.
 export const DEFAULT_CONFIG = {
   manual_trigger: { initial_data: {} },
   read_file: { path: "data/input.txt", encoding: "utf-8" },
@@ -20,7 +20,9 @@ export const DEFAULT_CONFIG = {
   log: { message: "Hello, {input.user}!", level: "info" },
   custom_code: { script_name: "my_script", entry_point: "main", params: {} },
   expression: { expression: "input.a + input.b" },
-  // Note — суто візуальний стікер (рушій його ігнорує).
+  hello: {},
+  // Note — a purely visual sticker (the engine ignores it).
+  read_directory: { path: "data/", recursive: false, extension: "", name_contains: "" },
   note: {
     title: "Примітка",
     html_content: "",
@@ -33,7 +35,7 @@ export const DEFAULT_CONFIG = {
   },
 };
 
-// Колір-акцент для заголовка вузла на канвасі.
+// Accent color for the node header on the canvas.
 export const TYPE_BG = {
   manual_trigger: "bg-emerald-600",
   read_file: "bg-sky-600",
@@ -43,9 +45,10 @@ export const TYPE_BG = {
   custom_code: "bg-fuchsia-600",
   expression: "bg-teal-600",
   note: "bg-amber-300 text-slate-900",
+  read_directory: "bg-emerald-500",
 };
 
-// Скорочений підпис під заголовком вузла (рендериться у CustomNode).
+// Abbreviated caption under the node title (rendered in CustomNode).
 export function summarize(type, config) {
   switch (type) {
     case "manual_trigger": {
@@ -64,6 +67,8 @@ export function summarize(type, config) {
       return `${config?.script_name || "—"}.${config?.entry_point || "main"}()`;
     case "expression":
       return config?.expression || "—";
+    case "read_directory":
+      return `${config?.path || "—"} [фільтр: ${config?.name_contains || "*"}]`;
     case "note":
       return "";
     default:

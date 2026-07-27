@@ -14,11 +14,11 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 
-# Декларативні метадані: порти + UI-info
+# Declarative metadata: ports + UI information
 
 @dataclass(frozen=True)
 class PortSpec:
-    """Опис одного порту (вхідного або вихідного)."""
+    """Description of a single port (inbound or outbound)."""
 
     name: str
     type_hint: str = "any"
@@ -36,10 +36,10 @@ class PortSpec:
 
 @dataclass(frozen=True)
 class StaticConnection:
-    """Декларативний (зашитий у код вузла) зв'язок порт→порт.
+    """Declarative (hard-coded into the node) port-to-port connection.
 
-    Такі зв'язки серіалізуються в JSON-маніфест із прапорцем
-    `is_readonly: true` — фронтенд забороняє редагування цих ліній.
+    Such connections are serialized into the JSON manifest with the flag
+    `is_readonly: true` — the frontend prevents editing of these lines.
     """
 
     source_port: str
@@ -57,7 +57,7 @@ class StaticConnection:
 
 @dataclass(frozen=True)
 class NodeInfo:
-    """UI-метадані вузла, що повертаються у `/api/nodes/schema`."""
+    """The node's UI metadata, returned at `/api/nodes/schema`."""
 
     display_name: str
     category: str = "general"
@@ -76,9 +76,8 @@ class NodeInfo:
 
 
 def _ensure_own(cls: type, attr: str, default_factory):
-    """Гарантує, що атрибут належить *цьому* класу (а не успадкований).
-
-    Інакше @input_port на дочірньому класі мутував би список батька.
+    """Ensures that the attribute belongs to *this* class (rather than being inherited).
+    Otherwise, @input_port on the child class would modify the parent's list.
     """
     if attr not in cls.__dict__:
         setattr(cls, attr, default_factory())
@@ -91,9 +90,8 @@ def input_port(
     required: bool = False,
     description: str | None = None,
 ):
-    """Декоратор класу вузла: оголошує вхідний порт.
-
-    Метадані зберігаються у `cls.__inputs__`.
+    """Node class decorator: declares the input port.
+    The metadata is stored in `cls.__inputs__`.
     """
 
     def decorator(cls):
@@ -109,7 +107,7 @@ def output_port(
     type_hint: str = "any",
     description: str | None = None,
 ):
-    """Декоратор класу вузла: оголошує вихідний порт. Метадані — у `cls.__outputs__`."""
+    """Node class decorator: declares the output port. The metadata is in `cls.__outputs__`."""
 
     def decorator(cls):
         ports: list[PortSpec] = _ensure_own(cls, "__outputs__", list)
@@ -126,7 +124,7 @@ def node_info(
     icon: str = "circle",
     description: str = "",
 ):
-    """Декоратор класу вузла: записує UI-метадані у `cls.__node_info__`."""
+    """Node class decorator: records UI metadata in `cls.__node_info__`."""
 
     def decorator(cls):
         cls.__node_info__ = NodeInfo(
@@ -142,11 +140,10 @@ def node_info(
 
 
 def static_connection(source_port: str, target_node: str, target_port: str):
-    """Декоратор класу вузла: жорстко зашитий зв'язок порт→порт.
-
-    Серіалізується у схему з `is_readonly: true`. Двигун може використати
-    цей список як fallback-маршрутизацію, якщо у Workflow немає
-    відповідного explicit-ребра.
+    """Node-class decorator: a hard-coded port-to-port connection.
+    Serialized into a diagram with `is_readonly: true`. The engine can use
+    this list as fallback routing if the Workflow does not have
+    a corresponding explicit edge.
     """
 
     def decorator(cls):
@@ -156,21 +153,18 @@ def static_connection(source_port: str, target_node: str, target_port: str):
 
     return decorator
 
-
-# Базовий клас
+# Basic class
 
 class BaseNode(ABC):
-    """Базовий клас для всіх вузлів workflow.
-
-    Підкласи мають оголосити:
-      - `type_name` — рядок-ідентифікатор (унікальний у `NODE_REGISTRY`).
-      - `config_model` — Pydantic-клас для валідації `config`.
-      - `execute(context)` — повертає dict-output, що передається наступним вузлам.
-
-    Декларативні метадані (опційно):
-      - `@input_port(...)`, `@output_port(...)` — порти.
-      - `@node_info(...)` — UI-метадані.
-      - `@static_connection(...)` — readonly-зв'язки.
+    """The base class for all workflow nodes.
+    Subclasses must declare:
+      - `type_name` — a string identifier (unique in `NODE_REGISTRY`).
+      - `config_model` — a Pydantic class for validating `config`.
+      - `execute(context)` — returns a dict-output that is passed to subsequent nodes.
+    Declarative metadata (optional):
+      - `@input_port(...)`, `@output_port(...)` — ports.
+      - `@node_info(...)` — UI metadata.
+      - `@static_connection(...)` — read-only connections.
     """
 
     type_name: ClassVar[str]
@@ -193,19 +187,18 @@ class BaseNode(ABC):
         context: "ExecutionContext",
         input_data: dict,
     ) -> dict:
-        """Виконати логіку вузла.
-
-        :param context: спільний (потокобезпечний) стан запуску.
-        :param input_data: локальний словник вхідних даних, сформований
-            двигуном саме для цього виклику. Замість колишнього
-            `context.current_input`: data isolation на параметр функції,
-            що знімає race-condition між паралельними воркерами.
+        """Execute the node's logic.
+        :param context: shared (thread-safe) execution state.
+        :param input_data: local input data dictionary generated
+            by the engine specifically for this call. Replaces the former
+            `context.current_input`: data isolation for the function parameter,
+            which eliminates race conditions between parallel workers.
         """
         ...
 
     @classmethod
     def get_schema(cls) -> dict[str, Any]:
-        """JSON-маніфест вузла для `/api/nodes/schema` та динамічного UI."""
+        """The JSON manifest for the `/api/nodes/schema` endpoint and the dynamic UI."""
         info = cls.__node_info__ or NodeInfo(display_name=cls.type_name)
         inputs = list(cls.__dict__.get("__inputs__", cls.__inputs__))
         outputs = list(cls.__dict__.get("__outputs__", cls.__outputs__))
@@ -227,12 +220,10 @@ class BaseNode(ABC):
             "is_visual_only": bool(cls.is_visual_only),
         }
 
-
 NODE_REGISTRY: dict[str, type[BaseNode]] = {}
 
-
 def register_node(cls: type[BaseNode]) -> type[BaseNode]:
-    """Опційний декоратор-аліас для явної реєстрації (поряд із auto-discovery)."""
+    """An optional decorator alias for explicit registration (in addition to auto-discovery)."""
     type_name = getattr(cls, "type_name", None)
     if not isinstance(type_name, str) or not type_name:
         raise ValueError(f"{cls.__name__} has no valid type_name")
@@ -241,17 +232,15 @@ def register_node(cls: type[BaseNode]) -> type[BaseNode]:
 
 
 def discover_nodes(package_path: str) -> dict[str, type[BaseNode]]:
-    """Скан-сканер вузлів: обходить усі модулі у пакеті `package_path` (dotted name,
-    напр. `"app.nodes"`), імпортує їх та реєструє у `NODE_REGISTRY` усі класи,
-    що задовольняють контракт `BaseNode`.
-
-    Контракт реєстрації:
-      - клас є підкласом `BaseNode` і не самим `BaseNode`,
-      - має непорожній `type_name`,
-      - визначений саме у поточному модулі (щоб не реєструвати re-export).
-
-    Помилковий модуль (синтаксис, відсутня залежність) не валить весь застосунок —
-    лише логуються `WARNING` + повне трейсбек повідомлення.
+    """Node scanner: iterates through all modules in the `package_path` (dotted name,
+    e.g., `“app.nodes”`), imports them, and registers all classes
+    that satisfy the `BaseNode` contract in `NODE_REGISTRY`.
+    Registration contract:
+      - the class is a subclass of `BaseNode` and not `BaseNode` itself,
+      - has a non-empty `type_name`,
+      - is defined specifically in the current module (to avoid registering re-exports).
+    An invalid module (syntax error, missing dependency) does not crash the entire application —
+    only `WARNING` + a full traceback message are logged.
     """
     package = importlib.import_module(package_path)
 
@@ -261,7 +250,7 @@ def discover_nodes(package_path: str) -> dict[str, type[BaseNode]]:
         full_name = f"{package_path}.{module_info.name}"
         try:
             module = importlib.import_module(full_name)
-        except Exception as exc:  # noqa: BLE001 — навмисно широко
+        except Exception as exc:  # noqa: BLE001 — intentionally wide
             logger.warning("Skipping node module %s: %s", full_name, exc, exc_info=True)
             continue
 

@@ -7,9 +7,6 @@ import {
 } from "react";
 import { fetchNodesSchema } from "./api.js";
 
-// React-контекст із JSON-маніфестом усіх вузлів (`/api/nodes/schema`).
-// Динамічний UI рендерить порти зі schema, замість того щоб мати їх hardcoded.
-
 const NodeSchemaContext = createContext({
   schemas: {},
   loading: true,
@@ -46,7 +43,7 @@ export function useNodeSchemas() {
   return useContext(NodeSchemaContext);
 }
 
-// Чи має воркфлоу хоча б один static-зв'язок — тоді редагування ліній блокується.
+// Does the workflow have at least one static link? If so, editing the lines is blocked.
 export function hasReadonlyConnections(schemaMap, nodeTypes) {
   for (const type of nodeTypes) {
     const schema = schemaMap[type];

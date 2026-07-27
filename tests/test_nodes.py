@@ -17,8 +17,7 @@ from app.nodes.write_file import (
     _resolve_safe_path,
 )
 
-
-# ---------- registry ----------
+#registry
 
 def test_registry_contains_all_node_types():
     expected = {
@@ -32,21 +31,18 @@ def test_registry_contains_all_node_types():
     }
     assert expected.issubset(NODE_REGISTRY.keys())
 
-
 def test_registry_classes_match_concrete_types():
-    """Auto-discovery має зв'язати type_name із самим класом, а не з абстрактом."""
+    """Auto-discovery should associate `type_name` with the class itself, not with the abstract class."""
     assert NODE_REGISTRY["manual_trigger"] is ManualTriggerNode
     assert NODE_REGISTRY["expression"] is ExpressionNode
     assert NODE_REGISTRY["custom_code"] is CustomCodeNode
 
-
-# ---------- manual_trigger ----------
+#manual_trigger
 
 async def test_manual_trigger_emits_initial_data(ctx: ExecutionContext):
     node = ManualTriggerNode("t1", {"initial_data": {"k": "v", "n": 42}})
     out = await node.execute(ctx, {})
     assert out == {"k": "v", "n": 42}
-
 
 async def test_manual_trigger_returns_independent_dict(ctx: ExecutionContext):
     node = ManualTriggerNode("t1", {"initial_data": {"k": "v"}})
@@ -54,8 +50,7 @@ async def test_manual_trigger_returns_independent_dict(ctx: ExecutionContext):
     out["k"] = "mutated"
     assert node.config.initial_data == {"k": "v"}
 
-
-# ---------- read_file ----------
+#read_file
 
 async def test_read_file_reads_existing(tmp_path: Path, ctx: ExecutionContext):
     file = tmp_path / "in.txt"
@@ -64,7 +59,6 @@ async def test_read_file_reads_existing(tmp_path: Path, ctx: ExecutionContext):
     out = await node.execute(ctx, {})
     assert out == {"content": "hello world", "size": 11, "path": str(file)}
 
-
 async def test_read_file_uses_resolve_template(tmp_path: Path, ctx: ExecutionContext):
     file = tmp_path / "templated.txt"
     file.write_text("x", encoding="utf-8")
@@ -72,14 +66,12 @@ async def test_read_file_uses_resolve_template(tmp_path: Path, ctx: ExecutionCon
     out = await node.execute(ctx, {"file_name": "templated.txt"})
     assert out["content"] == "x"
 
-
 async def test_read_file_missing_raises(ctx: ExecutionContext):
     node = ReadFileNode("r1", {"path": "/__definitely_missing__/x.txt"})
     with pytest.raises(FileNotFoundError):
         await node.execute(ctx, {})
 
-
-# ---------- write_file ----------
+#write_file
 
 async def test_write_file_writes_to_sandbox(ctx: ExecutionContext):
     node = WriteFileNode("w1", {"path": "test_node_out.txt"})
@@ -91,7 +83,6 @@ async def test_write_file_writes_to_sandbox(ctx: ExecutionContext):
         assert out["append"] is False
     finally:
         written.unlink(missing_ok=True)
-
 
 async def test_write_file_append_mode(ctx: ExecutionContext):
     file_name = "test_node_append.txt"
@@ -105,7 +96,6 @@ async def test_write_file_append_mode(ctx: ExecutionContext):
     finally:
         written.unlink(missing_ok=True)
 
-
 async def test_write_file_uses_inline_content(ctx: ExecutionContext):
     node = WriteFileNode(
         "w1",
@@ -117,7 +107,6 @@ async def test_write_file_uses_inline_content(ctx: ExecutionContext):
         assert written.read_text(encoding="utf-8") == "literal text"
     finally:
         written.unlink(missing_ok=True)
-
 
 async def test_write_file_inline_content_resolves_templates(ctx: ExecutionContext):
     node = WriteFileNode(
@@ -131,24 +120,20 @@ async def test_write_file_inline_content_resolves_templates(ctx: ExecutionContex
     finally:
         written.unlink(missing_ok=True)
 
-
 async def test_write_file_blocks_path_traversal(ctx: ExecutionContext):
     node = WriteFileNode("w1", {"path": "../../etc/passwd"})
     with pytest.raises(PathTraversalError, match="outside sandbox"):
         await node.execute(ctx, {"content": "evil"})
 
-
 def test_resolve_safe_path_inside_sandbox():
     p = _resolve_safe_path("inside.txt")
     assert p.is_relative_to(SANDBOX_DIR)
-
 
 def test_resolve_safe_path_blocks_absolute_outside():
     with pytest.raises(PathTraversalError):
         _resolve_safe_path(str(Path(__file__).parent / "x.txt"))
 
-
-# ---------- condition ----------
+#condition
 
 @pytest.mark.parametrize(
     "expr, expected",
@@ -162,18 +147,15 @@ def test_resolve_safe_path_blocks_absolute_outside():
 def test_rewrite_dot_access(expr, expected):
     assert _rewrite_dot_access(expr) == expected
 
-
 async def test_condition_true(ctx: ExecutionContext):
     node = ConditionNode("c1", {"expression": "input.size > 100"})
     out = await node.execute(ctx, {"size": 200})
     assert out == {"result": True, "input": {"size": 200}}
 
-
 async def test_condition_false(ctx: ExecutionContext):
     node = ConditionNode("c1", {"expression": "input.size > 100"})
     out = await node.execute(ctx, {"size": 50})
     assert out["result"] is False
-
 
 async def test_condition_uses_nodes_namespace(ctx: ExecutionContext):
     ctx.node_outputs = {"r1": {"size": 7}}
@@ -181,8 +163,7 @@ async def test_condition_uses_nodes_namespace(ctx: ExecutionContext):
     out = await node.execute(ctx, {})
     assert out["result"] is True
 
-
-# ---------- log ----------
+#log
 
 async def test_log_renders_template_and_publishes(ctx: ExecutionContext, fake_broker):
     node = LogNode("l1", {"message": "Hi {input.name}", "level": "warning"})
@@ -194,12 +175,11 @@ async def test_log_renders_template_and_publishes(ctx: ExecutionContext, fake_br
     assert entry.level == "warning"
     assert entry.node_id == "l1"
 
-
-# ---------- custom_code ----------
+#custom_code
 
 @pytest.fixture
 def script_factory():
-    """Створює тимчасові .py-скрипти у `scripts/` і прибирає їх після тесту."""
+    """Creates temporary .py scripts in `scripts/` and deletes them after the test."""
     SCRIPTS_DIR.mkdir(parents=True, exist_ok=True)
     created: list[Path] = []
 
@@ -214,7 +194,6 @@ def script_factory():
     for p in created:
         p.unlink(missing_ok=True)
 
-
 async def test_custom_code_calls_async_entry_point(script_factory, ctx: ExecutionContext):
     script_factory(
         "tn_double",
@@ -224,7 +203,6 @@ async def test_custom_code_calls_async_entry_point(script_factory, ctx: Executio
     node = CustomCodeNode("c1", {"script_name": "tn_double"})
     out = await node.execute(ctx, {"x": 21})
     assert out == {"doubled": 42}
-
 
 async def test_custom_code_passes_params_and_nodes(script_factory, ctx: ExecutionContext):
     script_factory(
@@ -244,7 +222,6 @@ async def test_custom_code_passes_params_and_nodes(script_factory, ctx: Executio
     out = await node.execute(ctx, {})
     assert out == {"value": 15, "label": "x"}
 
-
 async def test_custom_code_returns_empty_dict_when_none(
     script_factory, ctx: ExecutionContext
 ):
@@ -255,7 +232,6 @@ async def test_custom_code_returns_empty_dict_when_none(
     node = CustomCodeNode("c1", {"script_name": "tn_none"})
     out = await node.execute(ctx, {})
     assert out == {}
-
 
 async def test_custom_code_returns_empty_dict_when_no_return(
     script_factory, ctx: ExecutionContext
@@ -268,12 +244,10 @@ async def test_custom_code_returns_empty_dict_when_no_return(
     out = await node.execute(ctx, {})
     assert out == {}
 
-
 async def test_custom_code_missing_script_raises(ctx: ExecutionContext):
     node = CustomCodeNode("c1", {"script_name": "tn_does_not_exist_xyz"})
     with pytest.raises(CustomCodeError, match="not found"):
         await node.execute(ctx, {})
-
 
 async def test_custom_code_missing_entry_point_raises(
     script_factory, ctx: ExecutionContext
@@ -286,7 +260,6 @@ async def test_custom_code_missing_entry_point_raises(
     with pytest.raises(CustomCodeError, match="entry_point"):
         await node.execute(ctx, {})
 
-
 async def test_custom_code_non_dict_return_raises(
     script_factory, ctx: ExecutionContext
 ):
@@ -298,20 +271,17 @@ async def test_custom_code_non_dict_return_raises(
     with pytest.raises(CustomCodeError, match="expected dict"):
         await node.execute(ctx, {})
 
-
 async def test_custom_code_blocks_path_traversal(ctx: ExecutionContext):
     node = CustomCodeNode("c1", {"script_name": "../evil"})
     with pytest.raises(CustomCodeError, match="invalid script_name"):
         await node.execute(ctx, {})
 
-
-# ---------- expression ----------
+#expression
 
 async def test_expression_arithmetic(ctx: ExecutionContext):
     node = ExpressionNode("e1", {"expression": "input.a + input.b"})
     out = await node.execute(ctx, {"a": 10, "b": 32})
     assert out == {"result": 42}
-
 
 async def test_expression_uses_nodes_namespace(ctx: ExecutionContext):
     ctx.node_outputs = {"r1": {"size": 7}}
@@ -319,18 +289,15 @@ async def test_expression_uses_nodes_namespace(ctx: ExecutionContext):
     out = await node.execute(ctx, {})
     assert out == {"result": 42}
 
-
 async def test_expression_returns_string_value(ctx: ExecutionContext):
     node = ExpressionNode("e1", {"expression": "'Hi, ' + input.name"})
     out = await node.execute(ctx, {"name": "Olena"})
     assert out == {"result": "Hi, Olena"}
 
-
 async def test_expression_returns_list(ctx: ExecutionContext):
     node = ExpressionNode("e1", {"expression": "[1, 2, 3]"})
     out = await node.execute(ctx, {})
     assert out == {"result": [1, 2, 3]}
-
 
 async def test_expression_invalid_syntax_raises(ctx: ExecutionContext):
     node = ExpressionNode("e1", {"expression": "1 + +"})
